@@ -1,8 +1,7 @@
 /**
  * Orchestration Module
  *
- * Agent orchestration, planning, and execution
+ * Agent planning and prompt generation
  */
 
 export { AgentPlanner, type PlannerContext, type PlannerResult } from './planner.js';
-export { AgentOrchestrator, type OrchestratorConfig, type ExecutionEvent } from './orchestrator.js';
