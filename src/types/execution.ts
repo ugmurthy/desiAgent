@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /**
- * Status states for goals, runs, and executions
+ * Status states for DAG executions
  */
 export enum ExecutionStatus {
   Pending = 'pending',
@@ -10,51 +10,6 @@ export enum ExecutionStatus {
   Completed = 'completed',
   Failed = 'failed',
   Cancelled = 'cancelled',
-}
-
-/**
- * Goal represents a high-level objective for an agent to accomplish
- */
-export interface Goal {
-  id: string;
-  objective: string;
-  status: ExecutionStatus;
-  createdAt: Date;
-  updatedAt: Date;
-  stepBudget?: number;
-  allowedTools?: string[];
-  constraints?: Record<string, any>;
-  metadata?: Record<string, any>;
-}
-
-/**
- * Run represents a single execution of a goal
- */
-export interface Run {
-  id: string;
-  goalId: string;
-  status: ExecutionStatus;
-  createdAt: Date;
-  updatedAt: Date;
-  completedAt?: Date;
-  failureReason?: string;
-  metadata?: Record<string, any>;
-}
-
-/**
- * Step represents a single action taken during a run
- */
-export interface Step {
-  id: string;
-  runId: string;
-  index: number;
-  type: 'thought' | 'tool_call' | 'tool_result' | 'final_answer';
-  content: string;
-  toolName?: string;
-  toolInput?: Record<string, any>;
-  toolOutput?: Record<string, any>;
-  timestamp: Date;
-  metadata?: Record<string, any>;
 }
 
 /**
@@ -225,17 +180,6 @@ export interface ExecutionEvent {
 }
 
 /**
- * Filter options for querying goals
- */
-export interface GoalFilter {
-  status?: ExecutionStatus;
-  createdAfter?: Date;
-  createdBefore?: Date;
-  limit?: number;
-  offset?: number;
-}
-
-/**
  * Filter options for querying DAGs
  */
 export interface DAGFilter {
@@ -244,20 +188,6 @@ export interface DAGFilter {
   createdBefore?: Date;
   limit?: number;
   offset?: number;
-}
-
-/**
- * Schedule configuration for recurring goals/DAGs
- */
-export interface Schedule {
-  id: string;
-  goalOrDagId: string;
-  cronExpression: string;
-  nextRun?: Date;
-  lastRun?: Date;
-  isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 /**
@@ -271,26 +201,3 @@ export const ExecutionStatusSchema = z.enum([
   'failed',
   'cancelled',
 ]);
-
-export const GoalSchema = z.object({
-  id: z.string(),
-  objective: z.string(),
-  status: ExecutionStatusSchema,
-  createdAt: z.date(),
-  updatedAt: z.date(),
-  stepBudget: z.number().optional(),
-  allowedTools: z.array(z.string()).optional(),
-  constraints: z.record(z.any()).optional(),
-  metadata: z.record(z.any()).optional(),
-});
-
-export const RunSchema = z.object({
-  id: z.string(),
-  goalId: z.string(),
-  status: ExecutionStatusSchema,
-  createdAt: z.date(),
-  updatedAt: z.date(),
-  completedAt: z.date().optional(),
-  failureReason: z.string().optional(),
-  metadata: z.record(z.any()).optional(),
-});
