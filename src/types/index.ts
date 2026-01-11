@@ -12,9 +12,6 @@ export { DesiAgentConfigSchema, type LLMProvider, type LogLevel } from './config
 export {
   ExecutionStatus,
   ExecutionEventType,
-  type Goal,
-  type Run,
-  type Step,
   type DAG,
   type DAGNode,
   type DAGEdge,
@@ -25,12 +22,8 @@ export {
   type SubStep,
   type SubStepStatus,
   type ExecutionEvent,
-  type GoalFilter,
   type DAGFilter,
-  type Schedule,
   ExecutionStatusSchema,
-  GoalSchema,
-  RunSchema,
 } from './execution.js';
 
 // Agent types
