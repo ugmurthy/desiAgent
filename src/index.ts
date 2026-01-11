@@ -14,9 +14,7 @@ import {
 } from './errors/index.js';
 import { initializeLogger, getLogger } from './util/logger.js';
 import { getDatabase, closeDatabase } from './db/client.js';
-import { GoalsService } from './core/execution/goals.js';
 import { AgentsService } from './core/execution/agents.js';
-import { RunsService } from './core/execution/runs.js';
 import { DAGsService } from './core/execution/dags.js';
 import { ExecutionsService } from './core/execution/executions.js';
 import { ToolsService } from './core/execution/tools.js';
@@ -24,37 +22,30 @@ import { ArtifactsService } from './core/execution/artifacts.js';
 import { CostsService } from './core/execution/costs.js';
 import { createToolRegistry, ToolExecutor } from './core/tools/index.js';
 import { createLLMProvider, validateLLMSetup } from './core/providers/factory.js';
-import { AgentOrchestrator } from './core/orchestration/orchestrator.js';
 
 /**
  * DesiAgent client implementation
  */
 class DesiAgentClientImpl implements DesiAgentClient {
-  goals: GoalsService;
   agents: AgentsService;
   dags: DAGsService;
   executions: ExecutionsService;
-  runs: RunsService;
   tools: ToolsService;
   artifacts: ArtifactsService;
   costs: CostsService;
   private logger = getLogger();
 
   constructor(
-    goals: GoalsService,
     agents: AgentsService,
     dags: DAGsService,
     executions: ExecutionsService,
-    runs: RunsService,
     tools: ToolsService,
     artifacts: ArtifactsService,
     costs: CostsService
   ) {
-    this.goals = goals;
     this.agents = agents;
     this.dags = dags;
     this.executions = executions;
-    this.runs = runs;
     this.tools = tools;
     this.artifacts = artifacts;
     this.costs = costs;
@@ -87,8 +78,11 @@ class DesiAgentClientImpl implements DesiAgentClient {
  *   modelName: 'gpt-4o',
  * });
  *
- * const goal = await client.goals.create('Analyze this document');
- * const run = await client.goals.run(goal.id);
+ * // Use DAGs for task decomposition and execution
+ * const result = await client.dags.createFromGoal({
+ *   goalText: 'Analyze this document',
+ *   agentName: 'analyst',
+ * });
  *
  * await client.shutdown();
  * ```
@@ -112,17 +106,15 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     logger.info('Database initialized');
 
     // Initialize services
-    const goalsService = new GoalsService(db);
     const agentsService = new AgentsService(db);
-    const runsService = new RunsService(db);
     const executionsService = new ExecutionsService(db);
 
-    // Initialize tool registry (Phase 3)
+    // Initialize tool registry
     const toolRegistry = createToolRegistry();
     const toolsService = new ToolsService(toolRegistry);
     const toolExecutor = new ToolExecutor(toolRegistry);
 
-    // Initialize LLM provider (Phase 4)
+    // Initialize LLM provider
     const llmProviderConfig = {
       provider: validatedConfig.llmProvider as 'openai' | 'openrouter' | 'ollama',
       apiKey: validatedConfig.llmProvider === 'openrouter' 
@@ -143,15 +135,6 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       agentsService,
     });
 
-    // Initialize orchestrator (Phase 4)
-    const orchestrator = new AgentOrchestrator({
-      db,
-      llmProvider,
-      toolExecutor,
-      runService: runsService,
-      maxSteps: 20,
-    });
-
     // Initialize artifacts service
     const artifactsService = new ArtifactsService();
 
@@ -160,11 +143,9 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
 
     // Create and return client
     const client = new DesiAgentClientImpl(
-      goalsService,
       agentsService,
       dagsService,
       executionsService,
-      runsService,
       toolsService,
       artifactsService,
       costsService
@@ -177,7 +158,6 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     });
 
     // Store internal services on client
-    (client as any)._orchestrator = orchestrator;
     (client as any)._toolExecutor = toolExecutor;
     (client as any)._llmProvider = llmProvider;
 
@@ -215,9 +195,6 @@ export type { DesiAgentClient } from './types/index.js';
 export {
   ExecutionStatus,
   ExecutionEventType,
-  type Goal,
-  type Run,
-  type Step,
   type DAG,
   type DAGNode,
   type DAGEdge,
@@ -228,9 +205,7 @@ export {
   type SubStep,
   type SubStepStatus,
   type ExecutionEvent,
-  type GoalFilter,
   type DAGFilter,
-  type Schedule,
   type Agent,
   type AgentConstraints,
   type Tool,
@@ -281,9 +256,7 @@ export type {
 export { DAGsService } from './core/execution/dags.js';
 export { ExecutionsService } from './core/execution/executions.js';
 export { CostsService } from './core/execution/costs.js';
-export { GoalsService } from './core/execution/goals.js';
 export { AgentsService } from './core/execution/agents.js';
-export { RunsService } from './core/execution/runs.js';
 export { ToolsService } from './core/execution/tools.js';
 export { ArtifactsService } from './core/execution/artifacts.js';
 
