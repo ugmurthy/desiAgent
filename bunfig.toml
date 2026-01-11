@@ -1,0 +1,18 @@
+[build]
+# Target ES2022 for modern JavaScript
+target = "es2022"
+
+[runtime]
+# Use bun's built-in sqlite support
+# This allows us to use bun:sqlite natively
+bun-module-support = true
+
+[test]
+# Use bun's native test runner when needed
+# Vitest is preferred for better DX
+root = "src"
+preload = ["./src/test/setup.ts"]
+
+[env]
+# Environment variable support
+load-dotenv = true
