@@ -1,7 +1,4 @@
 import type {
-  Goal,
-  Run,
-  Step,
   DAG,
   DAGExecution,
   DAGExecutionWithSteps,
@@ -9,24 +6,9 @@ import type {
   DAGExecutionStatus,
   SubStep,
   ExecutionEvent,
-  GoalFilter,
   DAGFilter,
 } from './execution.js';
 import type { Agent, ToolDefinition } from './agent.js';
-
-/**
- * Goals service interface
- */
-export interface GoalsService {
-  create(objective: string, params?: Record<string, any>): Promise<Goal>;
-  list(filter?: GoalFilter): Promise<Goal[]>;
-  get(id: string): Promise<Goal>;
-  update(id: string, updates: Partial<Goal>): Promise<Goal>;
-  delete(id: string): Promise<void>;
-  run(id: string): Promise<Run>;
-  pause(id: string): Promise<Goal>;
-  resume(id: string): Promise<Goal>;
-}
 
 /**
  * Agents service interface
@@ -169,16 +151,6 @@ export interface ExecutionsService {
   getSubSteps(id: string): Promise<SubStep[]>;
   delete(id: string): Promise<void>;
   streamEvents(id: string): AsyncIterable<ExecutionEvent>;
-}
-
-/**
- * Runs service interface
- */
-export interface RunsService {
-  list(filter?: Record<string, any>): Promise<Run[]>;
-  get(id: string): Promise<Run>;
-  getSteps(id: string): Promise<Step[]>;
-  delete(id: string): Promise<void>;
 }
 
 /**
@@ -329,11 +301,9 @@ export interface CostsService {
  */
 export interface DesiAgentClient {
   // Services
-  goals: GoalsService;
   agents: AgentsService;
   dags: DAGsService;
   executions: ExecutionsService;
-  runs: RunsService;
   tools: ToolsService;
   artifacts: ArtifactsService;
   costs: CostsService;
