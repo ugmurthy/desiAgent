@@ -491,9 +491,10 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
                 },
               });
             } catch (error) {
-              this.logger.error({ err: error.toString(), taskId: task.id }, `Task ${task.id} failed`);
+              
 
               const errorMessage = error instanceof Error ? error.message : String(error);
+              this.logger.error({ err: errorMessage, taskId: task.id }, `Task ${task.id} failed`);
               await this.db.update(dagSubSteps)
                 .set({
                   status: 'failed',

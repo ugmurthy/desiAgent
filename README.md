@@ -5,7 +5,7 @@ A library-first async agent system for building autonomous workflows with TypeSc
 ## Features
 
 - **Multiple LLM Providers**: OpenAI, OpenRouter, and Ollama support
-- **Goal-Oriented Execution**: Create goals and let agents execute them autonomously
+- **Autonomous Execution**: Let agents execute objectives autonomously
 - **DAG Workflows**: Decompose complex objectives into directed acyclic graphs
 - **Built-in Tools**: Web scraping, file operations, bash commands, and more
 - **Event Streaming**: Track execution progress in real-time
@@ -66,14 +66,10 @@ const client = await setupDesiAgent({
   modelName: 'gpt-4o',
 });
 
-// Create a goal
-const goal = await client.goals.create('Summarize the latest tech news');
+// Create and execute a DAG
+const execution = await client.dags.createAndExecute('Summarize the latest tech news');
+console.log(`Execution: ${execution.id}, Status: ${execution.status}`);
 
-// Execute the goal
-const run = await client.goals.run(goal.id);
-console.log(`Run started: ${run.id}, Status: ${run.status}`);
-
-// Clean up
 await client.shutdown();
 ```
 
@@ -86,15 +82,9 @@ const client = await setupDesiAgent({
   llmProvider: 'openrouter',
   openrouterApiKey: process.env.OPENROUTER_API_KEY,
   modelName: 'google/gemini-2.5-flash-lite-preview-06-2025',
-  logLevel: 'info',
 });
 
-const goal = await client.goals.create('Research best practices for API design', {
-  title: 'API Design Research',
-  stepBudget: 10,
-});
-
-const run = await client.goals.run(goal.id);
+const execution = await client.dags.createAndExecute('Research best practices for API design');
 await client.shutdown();
 ```
 
@@ -107,12 +97,9 @@ const client = await setupDesiAgent({
   llmProvider: 'ollama',
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
   modelName: 'llama3.2',
-  logLevel: 'info',
 });
 
-const goal = await client.goals.create('Explain quantum computing in simple terms');
-const run = await client.goals.run(goal.id);
-
+const execution = await client.dags.createAndExecute('Explain quantum computing in simple terms');
 await client.shutdown();
 ```
 
@@ -145,48 +132,6 @@ interface DesiAgentConfig {
 ```
 
 ## API Reference
-
-### Goals
-
-```typescript
-// Create a new goal
-const goal = await client.goals.create(objective, params?);
-
-// List all goals
-const goals = await client.goals.list(filter?);
-
-// Get a specific goal
-const goal = await client.goals.get(id);
-
-// Update a goal
-await client.goals.update(id, updates);
-
-// Delete a goal
-await client.goals.delete(id);
-
-// Execute a goal
-const run = await client.goals.run(id);
-
-// Pause/Resume execution
-await client.goals.pause(id);
-await client.goals.resume(id);
-```
-
-### Runs
-
-```typescript
-// List all runs
-const runs = await client.runs.list(filter?);
-
-// Get a specific run
-const run = await client.runs.get(id);
-
-// Get execution steps for a run
-const steps = await client.runs.getSteps(id);
-
-// Delete a run
-await client.runs.delete(id);
-```
 
 ### Agents
 
