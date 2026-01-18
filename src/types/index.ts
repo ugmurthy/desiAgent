@@ -26,6 +26,9 @@ export {
   ExecutionStatusSchema,
 } from './execution.js';
 
+// DAG Executor types (performance config)
+export { type ExecutionConfig } from '../core/execution/dagExecutor.js';
+
 // Agent types
 export {
   type Agent,

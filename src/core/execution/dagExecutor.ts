@@ -59,6 +59,32 @@ export interface DAGExecutorConfig {
   toolRegistry: ToolRegistry;
 }
 
+/**
+ * Execution configuration for performance tuning
+ */
+export interface ExecutionConfig {
+  /**
+   * Skip event emission for maximum speed when streaming not needed.
+   * Default: false (events enabled)
+   */
+  skipEvents?: boolean;
+  /**
+   * Batch DB updates per wave instead of per-task.
+   * Default: true
+   */
+  batchDbUpdates?: boolean;
+}
+
+/**
+ * Pre-fetched agent data for inference tasks
+ */
+interface AgentData {
+  name: string;
+  provider: 'openai' | 'openrouter' | 'ollama';
+  model: string;
+  promptTemplate: string;
+}
+
 export interface GlobalContext {
   formatted: string;
   totalTasks: number;
@@ -289,13 +315,69 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     return resolvedValue;
   }
 
+  /**
+   * Pre-fetch all agents needed for inference tasks
+   * Reduces DB queries during execution from O(n) to O(1) per agent
+   */
+  private async prefetchAgents(job: DecomposerJob): Promise<Map<string, AgentData>> {
+    const agentNames = new Set<string>();
+    
+    for (const task of job.sub_tasks) {
+      if (task.action_type === 'inference' || task.tool_or_prompt.name === 'inference') {
+        agentNames.add(task.tool_or_prompt.name);
+      }
+    }
+
+    const agentMap = new Map<string, AgentData>();
+    
+    if (agentNames.size === 0) {
+      return agentMap;
+    }
+
+    this.logger.debug({ agentNames: [...agentNames] }, 'Pre-fetching agents for inference tasks');
+
+    const fetchPromises = [...agentNames].map(async (name) => {
+      const agent = await this.db.query.agents.findFirst({
+        where: eq(agents.name, name),
+      });
+      
+      if (agent && agent.provider && agent.model) {
+        agentMap.set(name, {
+          name: agent.name,
+          provider: agent.provider as 'openai' | 'openrouter' | 'ollama',
+          model: agent.model,
+          promptTemplate: agent.promptTemplate,
+        });
+      }
+    });
+
+    await Promise.all(fetchPromises);
+    
+    this.logger.debug({ cachedAgents: agentMap.size }, 'Agents pre-fetched');
+    return agentMap;
+  }
+
+  /**
+   * Conditionally emit event based on config
+   */
+  private emitEventIfEnabled(config: ExecutionConfig, event: Parameters<typeof ExecutionsService.emitEvent>[0]): void {
+    if (!config.skipEvents) {
+      ExecutionsService.emitEvent(event);
+    }
+  }
+
   async execute(
     job: DecomposerJob,
     executionId: string,
     dagId?: string,
-    originalRequest?: string
+    originalRequest?: string,
+    config: ExecutionConfig = {}
   ): Promise<string> {
     const effectiveOriginalRequest = originalRequest || job.original_request;
+    const execConfig: ExecutionConfig = {
+      skipEvents: config.skipEvents ?? false,
+      batchDbUpdates: config.batchDbUpdates ?? true,
+    };
 
     if (job.clarification_needed) {
       throw new Error(`Clarification needed: ${job.clarification_query}`);
@@ -309,15 +391,19 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       dagId,
       totalTasks: job.sub_tasks.length,
       primaryIntent: job.intent.primary,
+      config: execConfig,
     }, 'Starting DAG execution');
 
     try {
+      // Pre-fetch all agents needed for inference tasks
+      const agentCache = await this.prefetchAgents(job);
+
       // Update execution status to running
       await this.db.update(dagExecutions)
         .set({ status: 'running', startedAt: new Date() })
         .where(eq(dagExecutions.id, execId));
 
-      ExecutionsService.emitEvent({
+      this.emitEventIfEnabled(execConfig, {
         type: ExecutionEventType.Started,
         executionId: execId,
         timestamp: new Date(),
@@ -338,6 +424,14 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         return task.dependencies.every(dep => executedTasks.has(dep));
       };
 
+      // Track task execution results for batch updates
+      interface TaskWaveResult {
+        taskId: string;
+        startTime: number;
+        result?: TaskExecutionResult;
+        error?: string;
+      }
+
       const executeTask = async (task: SubTask): Promise<TaskExecutionResult> => {
         const symbols: Record<string, string> = {
           writeFile: '📄',
@@ -349,14 +443,17 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         const displaySym = symbols[task.tool_or_prompt.name] || '⚙️';
         this.logger.info(`${displaySym} Executing sub-task ${task.id} ${task.description.slice(0, 50)}...`);
 
-        await this.db.update(dagSubSteps)
-          .set({ status: 'running', startedAt: new Date() })
-          .where(and(
-            eq(dagSubSteps.taskId, task.id),
-            eq(dagSubSteps.executionId, execId)
-          ));
+        // Skip individual DB update if batching enabled - will batch at wave end
+        if (!execConfig.batchDbUpdates) {
+          await this.db.update(dagSubSteps)
+            .set({ status: 'running', startedAt: new Date() })
+            .where(and(
+              eq(dagSubSteps.taskId, task.id),
+              eq(dagSubSteps.executionId, execId)
+            ));
+        }
 
-        ExecutionsService.emitEvent({
+        this.emitEventIfEnabled(execConfig, {
           type: ExecutionEventType.StepCompleted,
           executionId: execId,
           timestamp: new Date(),
@@ -376,7 +473,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           subStepId: task.id,
           emitEvent: {
             progress: (message: string) => {
-              ExecutionsService.emitEvent({
+              this.emitEventIfEnabled(execConfig, {
                 type: ExecutionEventType.ToolCalled,
                 executionId: execId,
                 timestamp: new Date(),
@@ -384,7 +481,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
               });
             },
             completed: (message: string) => {
-              ExecutionsService.emitEvent({
+              this.emitEventIfEnabled(execConfig, {
                 type: ExecutionEventType.ToolCompleted,
                 executionId: execId,
                 timestamp: new Date(),
@@ -401,7 +498,6 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           }
 
           const { resolvedParams } = this.resolveDependencies(task, taskResults);
-          //const validatedInput = tool.inputSchema.parse(singleDependency !== null ? singleDependency : resolvedParams);
           this.logger.debug (`Executing tool ${task.tool_or_prompt.name} with params: ${JSON.stringify(resolvedParams)} before validation`);
           const validatedInput = tool.inputSchema.parse(resolvedParams)
           const result = await tool.execute(validatedInput, toolCtx);
@@ -410,19 +506,18 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           const fullPrompt = this.buildInferencePrompt(task, globalContext, taskResults);
 
           const agentName = task.tool_or_prompt.name;
-          const agent = await this.db.query.agents.findFirst({
-            where: eq(agents.name, agentName),
-          });
-
+          
+          // Use pre-fetched agent from cache instead of DB query
+          const agent = agentCache.get(agentName);
           if (!agent) {
-            throw new Error(`No agent found with name: ${agentName}`);
+            throw new Error(`No agent found with name: ${agentName} (not in pre-fetch cache)`);
           }
 
           const llmExecuteTool = new LlmExecuteTool();
 
           const result = await llmExecuteTool.execute({
-            provider: agent.provider as 'openai' | 'openrouter' | 'ollama',
-            model: agent.model!,
+            provider: agent.provider,
+            model: agent.model,
             task: agent.promptTemplate,
             prompt: fullPrompt,
           }, toolCtx);
@@ -438,7 +533,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         throw new Error(`Unknown action type: ${task.action_type}`);
       };
 
-      // Execute tasks in dependency order
+      // Execute tasks in dependency order with wave-based batching
       while (executedTasks.size < job.sub_tasks.length) {
         const readyTasks = job.sub_tasks.filter(
           task => !executedTasks.has(task.id) && canExecute(task)
@@ -451,13 +546,35 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           );
         }
 
+        // Collect wave results for batch DB update
+        const waveResults: TaskWaveResult[] = [];
+        const waveStartTime = Date.now();
+
+        // Batch update all tasks in wave to 'running' status if batching enabled
+        if (execConfig.batchDbUpdates && readyTasks.length > 0) {
+          const updatePromises = readyTasks.map(task =>
+            this.db.update(dagSubSteps)
+              .set({ status: 'running', startedAt: new Date() })
+              .where(and(
+                eq(dagSubSteps.taskId, task.id),
+                eq(dagSubSteps.executionId, execId)
+              ))
+          );
+          await Promise.all(updatePromises);
+          this.logger.debug({ waveSize: readyTasks.length }, 'Batch updated wave tasks to running');
+        }
+
         await Promise.all(
           readyTasks.map(async (task) => {
             const taskExecStartTime = Date.now();
+            const waveResult: TaskWaveResult = { taskId: task.id, startTime: taskExecStartTime };
+            waveResults.push(waveResult);
+
             try {
               const execResult = await executeTask(task);
               taskResults.set(task.id, execResult.content);
               executedTasks.add(task.id);
+              waveResult.result = execResult;
 
               const serializedResult = typeof execResult.content === 'string'
                 ? execResult.content
@@ -465,22 +582,25 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
               this.logger.debug({ taskId: task.id, result: serializedResult }, `╰─task ${task.id} result after executeTask():`);
 
-              await this.db.update(dagSubSteps)
-                .set({
-                  status: 'completed',
-                  result: serializedResult,
-                  completedAt: new Date(),
-                  durationMs: Date.now() - taskExecStartTime,
-                  usage: execResult.usage,
-                  costUsd: execResult.costUsd?.toString(),
-                  generationStats: execResult.generationStats,
-                })
-                .where(and(
-                  eq(dagSubSteps.taskId, task.id),
-                  eq(dagSubSteps.executionId, execId)
-                ));
+              // Skip individual DB update if batching - will batch at wave end
+              if (!execConfig.batchDbUpdates) {
+                await this.db.update(dagSubSteps)
+                  .set({
+                    status: 'completed',
+                    result: serializedResult,
+                    completedAt: new Date(),
+                    durationMs: Date.now() - taskExecStartTime,
+                    usage: execResult.usage,
+                    costUsd: execResult.costUsd?.toString(),
+                    generationStats: execResult.generationStats,
+                  })
+                  .where(and(
+                    eq(dagSubSteps.taskId, task.id),
+                    eq(dagSubSteps.executionId, execId)
+                  ));
+              }
 
-              ExecutionsService.emitEvent({
+              this.emitEventIfEnabled(execConfig, {
                 type: ExecutionEventType.StepCompleted,
                 executionId: execId,
                 timestamp: new Date(),
@@ -494,10 +614,11 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
                 },
               });
             } catch (error) {
-              
-
               const errorMessage = error instanceof Error ? error.message : String(error);
               this.logger.error({ err: errorMessage, taskId: task.id }, `Task ${task.id} failed`);
+              waveResult.error = errorMessage;
+
+              // Immediate update for failures (important for debugging)
               await this.db.update(dagSubSteps)
                 .set({
                   status: 'failed',
@@ -510,7 +631,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
                   eq(dagSubSteps.executionId, execId)
                 ));
 
-              ExecutionsService.emitEvent({
+              this.emitEventIfEnabled(execConfig, {
                 type: ExecutionEventType.StepFailed,
                 executionId: execId,
                 timestamp: new Date(),
@@ -526,6 +647,39 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             }
           })
         );
+
+        // Batch update completed tasks at wave end
+        if (execConfig.batchDbUpdates) {
+          const completedResults = waveResults.filter(r => r.result && !r.error);
+          if (completedResults.length > 0) {
+            const batchUpdatePromises = completedResults.map(wr => {
+              const serializedResult = typeof wr.result!.content === 'string'
+                ? wr.result!.content
+                : JSON.stringify(wr.result!.content);
+
+              return this.db.update(dagSubSteps)
+                .set({
+                  status: 'completed',
+                  result: serializedResult,
+                  completedAt: new Date(),
+                  durationMs: Date.now() - wr.startTime,
+                  usage: wr.result!.usage,
+                  costUsd: wr.result!.costUsd?.toString(),
+                  generationStats: wr.result!.generationStats,
+                })
+                .where(and(
+                  eq(dagSubSteps.taskId, wr.taskId),
+                  eq(dagSubSteps.executionId, execId)
+                ));
+            });
+
+            await Promise.all(batchUpdatePromises);
+            this.logger.debug({
+              waveSize: completedResults.length,
+              waveDurationMs: Date.now() - waveStartTime,
+            }, 'Batch updated wave completed tasks');
+          }
+        }
       }
 
       this.logger.info('All tasks completed, running synthesis');
@@ -564,7 +718,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         .where(eq(dagExecutions.id, execId));
 
       if (statusData.status === 'completed' || statusData.status === 'partial') {
-        ExecutionsService.emitEvent({
+        this.emitEventIfEnabled(execConfig, {
           type: ExecutionEventType.Completed,
           executionId: execId,
           timestamp: new Date(),
@@ -577,7 +731,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           },
         });
       } else if (statusData.status === 'failed') {
-        ExecutionsService.emitEvent({
+        this.emitEventIfEnabled(execConfig, {
           type: ExecutionEventType.Failed,
           executionId: execId,
           timestamp: new Date(),

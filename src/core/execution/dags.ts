@@ -25,7 +25,7 @@ import type { LLMProvider } from '../providers/types.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { createLLMProvider } from '../providers/factory.js';
 import type { AgentsService } from './agents.js';
-import { DAGExecutor } from './dagExecutor.js';
+import { DAGExecutor, type ExecutionConfig } from './dagExecutor.js';
 
 export function generateDAGId(): string {
   return `dag_${nanoid(21)}`;
@@ -112,11 +112,19 @@ export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult |
 export interface ExecuteOptions {
   provider?: 'openai' | 'openrouter' | 'ollama';
   model?: string;
+  /**
+   * Execution configuration for performance tuning
+   */
+  executionConfig?: ExecutionConfig;
 }
 
 export interface ExecuteDefinitionOptions {
   definition: DecomposerJob;
   originalGoalText: string;
+  /**
+   * Execution configuration for performance tuning
+   */
+  executionConfig?: ExecutionConfig;
 }
 
 export interface RunExperimentsInput {
@@ -540,7 +548,7 @@ export class DAGsService {
     });
 
     // Start execution in background - don't await
-    dagExecutor.execute(job, executionId, dagId, originalGoalText).catch((error) => {
+    dagExecutor.execute(job, executionId, dagId, originalGoalText, _options?.executionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG execution failed');
     });
 
@@ -549,7 +557,7 @@ export class DAGsService {
 
   // @TODO ask Oracle why is this function required
   async executeDefinition(options: ExecuteDefinitionOptions): Promise<{ id: string; status: string }> {
-    const { definition: job, originalGoalText } = options;
+    const { definition: job, originalGoalText, executionConfig } = options;
 
     if (job.clarification_needed) {
       throw new ValidationError(
@@ -608,14 +616,14 @@ export class DAGsService {
     });
 
     // Start execution in background - don't await
-    dagExecutor.execute(job, executionId, undefined, originalGoalText).catch((error) => {
+    dagExecutor.execute(job, executionId, undefined, originalGoalText, executionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG execution failed');
     });
 
     return { id: executionId, status: 'pending' };
   }
 
-  async resume(executionId: string): Promise<{ id: string; status: string; retryCount: number }> {
+  async resume(executionId: string, executionConfig?: ExecutionConfig): Promise<{ id: string; status: string; retryCount: number }> {
     const [execution] = await this.db.select().from(dagExecutions).where(eq(dagExecutions.id, executionId)).limit(1);
 
     if (!execution) {
@@ -671,7 +679,7 @@ export class DAGsService {
     });
 
     // Start execution in background - don't await
-    dagExecutor.execute(job, executionId, execution.dagId, originalGoalText).catch((error) => {
+    dagExecutor.execute(job, executionId, execution.dagId, originalGoalText, executionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG resume execution failed');
     });
 
