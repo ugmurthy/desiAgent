@@ -294,7 +294,7 @@ export class DAGsService {
           throw new ValidationError(
             `Invalid DAG structure after ${attempt} attempts`,
             'result',
-            validatedResult.error.issues
+            JSON.stringify(validatedResult.error.issues)
           );
         }
         retryReason = 'retry_validation';

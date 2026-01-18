@@ -138,6 +138,9 @@ async function main() {
 49. **Review and Refine:** Check for completeness, bias, and actionability; iterate on any weak sections.
 
 50. **Finalize and Output Report:** Compile the comprehensive report where combined answers to research questions provide a full q-commerce overview, with recommendations solving the entry/optimization problem. End with next steps for implementation.
+
+51. Send the Finalised report to ugmurthy@gmail.com
+ 
     `
     const createResult = await client.dags.createFromGoal({
       goalText: goal,

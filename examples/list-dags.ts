@@ -30,11 +30,9 @@ async function main() {
       console.log(`Found ${allDags.length} DAG(s):\n`);
 
       for (const dag of allDags) {
-        console.log(`ID: ${dag.id}`);
-        console.log(`  Objective: ${dag.objective}`);
-        console.log(`  Status: ${dag.status}`);
-        console.log(`  Created: ${dag.createdAt}`);
-        console.log(`  Updated: ${dag.updatedAt}`);
+        console.log(`ID: ${dag.id} : ${dag.createdAt}: ${dag.objective}`);
+        
+        
         if (dag.metadata?.cronSchedule) {
           console.log(`  Schedule: ${dag.metadata.cronSchedule} (active: ${dag.metadata.scheduleActive})`);
         }

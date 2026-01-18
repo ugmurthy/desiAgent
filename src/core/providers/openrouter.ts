@@ -114,6 +114,14 @@ function extractUsage(data: OpenAIChatCompletionResponse): UsageInfo | undefined
   };
 }
 
+function extractCostFromGenerationStats(generationStats: any): number | undefined {
+  const totalCost = generationStats?.data?.total_cost;
+  if (totalCost !== undefined && totalCost !== null) {
+    return typeof totalCost === 'number' ? totalCost : parseFloat(totalCost);
+  }
+  return undefined;
+}
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
@@ -151,6 +159,62 @@ export class OpenRouterProvider implements LLMProvider {
     this.apiKey = apiKey;
     this.model = model;
     this.defaultMaxTokens = defaultMaxTokens;
+  }
+
+  /**
+   * Fetch generation stats from OpenRouter to get cost information
+   */
+  private async extractGenerationId(
+    data: OpenAIChatCompletionResponse, 
+    maxAttempts = 5, 
+    initialDelayMs = 500
+  ): Promise<{ data?: Record<string, any>; error?: string }> {
+    const generationId = data.id;
+    this.logger.debug({ url: `${BASE_URL}/generation?id=${generationId}` }, 'Generation url');
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const delayMs = initialDelayMs * Math.pow(1.5, attempt - 1);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        
+        const res = await fetch(
+          `${BASE_URL}/generation?id=${generationId}`,
+          { headers: buildHeaders(this.apiKey) }
+        );
+        
+        if (!res.ok) {
+          if (attempt === maxAttempts) {
+            this.logger.warn({ status: res.status, generationId, attempts: attempt }, 'Failed to fetch generation details after max attempts');
+            return { error: 'Failed to fetch details' };
+          }
+          this.logger.debug({ status: res.status, generationId, attempt }, 'Generation not ready, retrying...');
+          continue;
+        }
+        
+        const details = await res.json() as { data?: Record<string, any> };
+        const detailsData = details.data;
+        this.logger.debug({ generationId, attempt }, 'Successfully fetched generation details');
+        
+        const stats: Record<string, any> = {};
+        const allowedKeys = ['latency', 'model', 'generation_time', 'finish_reason', 'native_finish_reason', 'total_cost', 'id'];
+        
+        for (const key of allowedKeys) {
+          if (detailsData?.[key] !== undefined) {
+            stats[key] = detailsData[key];
+          }
+        }
+        
+        return { data: stats };
+      } catch (error) {
+        if (attempt === maxAttempts) {
+          this.logger.warn({ err: error, generationId, attempts: attempt }, 'Error fetching generation details after max attempts');
+          return { error: String(error) };
+        }
+        this.logger.debug({ err: error, generationId, attempt }, 'Error fetching generation, retrying...');
+      }
+    }
+    
+    return { error: 'Max attempts reached' };
   }
 
   /**
@@ -225,11 +289,19 @@ export class OpenRouterProvider implements LLMProvider {
       const usage = extractUsage(data);
       const content = data.choices[0]?.message?.content || '';
 
-      this.logger.debug(
-        `OpenRouter chat response: ${content.length} chars`
-      );
+      const generation_stats = await this.extractGenerationId(data);
+      const costUsd = extractCostFromGenerationStats(generation_stats);
+
+      if (usage) {
+        this.logger.debug({ usage, generation_stats, costUsd }, 'OpenRouter chat response metadata');
+      }
       
-      return { content, usage };
+      return { 
+        content, 
+        usage, 
+        costUsd,
+        generationStats: generation_stats?.data,
+      };
     } catch (error) {
       throw new LLMProviderError(
         `OpenRouter chat call failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -269,6 +341,13 @@ export class OpenRouterProvider implements LLMProvider {
 
       const data = await res.json() as OpenAIChatCompletionResponse;
       const usage = extractUsage(data);
+      
+      const generation_stats = await this.extractGenerationId(data);
+      const costUsd = extractCostFromGenerationStats(generation_stats);
+
+      if (usage) {
+        this.logger.debug({ usage, generation_stats, costUsd }, 'OpenRouter callWithTools response metadata');
+      }
 
       const choice = data.choices[0];
       if (!choice) {
@@ -284,15 +363,13 @@ export class OpenRouterProvider implements LLMProvider {
         arguments: jsonParseSafe(tc.function.arguments),
       }));
 
-      this.logger.debug(
-        `OpenRouter callWithTools response: ${toolCalls?.length || 0} tool calls`
-      );
-
       return {
         thought,
         toolCalls,
         finishReason: mapFinishReason(choice.finish_reason),
         usage,
+        costUsd,
+        generationStats: generation_stats?.data,
       };
     } catch (error) {
       throw new LLMProviderError(

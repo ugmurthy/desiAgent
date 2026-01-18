@@ -52,6 +52,8 @@ export interface ChatParams {
 export interface ChatResponse {
   content: string;
   usage?: UsageInfo;
+  costUsd?: number;
+  generationStats?: Record<string, any>;
 }
 
 /**
@@ -72,6 +74,8 @@ export interface LLMResponse {
   toolCalls?: ToolCall[];
   finishReason: FinishReason;
   usage?: UsageInfo;
+  costUsd?: number;
+  generationStats?: Record<string, any>;
 }
 
 /**

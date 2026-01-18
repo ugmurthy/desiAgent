@@ -22,7 +22,7 @@ async function main() {
   try {
     
     // Execute given execution id
-    const executionId = 'exec_luOPXarefgapZ_FBFwfTD';
+    const executionId = 'exec_i1GboFIaiwFhiSQpUNxYc';
     console.log(`\nExecuting . ${executionId}`);
     
     const execution = await client.executions.get(executionId);
