@@ -11,7 +11,20 @@ import { OpenRouterProvider } from './openrouter.js';
 import { getLogger } from '../../util/logger.js';
 
 /**
- * Create an LLM provider based on configuration
+ * LLM Provider cache for reusing provider instances
+ * Key format: "provider:model:maxTokens"
+ */
+const providerCache = new Map<string, LLMProvider>();
+
+/**
+ * Clear the provider cache
+ */
+export function clearProviderCache(): void {
+  providerCache.clear();
+}
+
+/**
+ * Create an LLM provider based on configuration (with caching)
  */
 export function createLLMProvider(
   config: {
@@ -23,6 +36,19 @@ export function createLLMProvider(
   }
 ): LLMProvider {
   const logger = getLogger();
+  
+  const model = config.model || getDefaultModel(config.provider);
+  const maxTokens = config.maxTokens || 4096;
+  const cacheKey = `${config.provider}:${model}:${maxTokens}`;
+
+  // Check cache first
+  const cached = providerCache.get(cacheKey);
+  if (cached) {
+    logger.debug(`Provider cache hit: ${cacheKey}`);
+    return cached;
+  }
+
+  let provider: LLMProvider;
 
   if (config.provider === 'openai') {
     const apiKey = config.apiKey;
@@ -31,37 +57,38 @@ export function createLLMProvider(
       throw new Error('OPENAI_API_KEY is required for openai provider');
     }
 
-    const model = config.model || 'gpt-4o';
-    const maxTokens = config.maxTokens || 4096;
-
     logger.info(`Creating OpenAI provider (model: ${model})`);
-    return new OpenAIProvider(apiKey, model, maxTokens);
-  }
-
-  if (config.provider === 'openrouter') {
+    provider = new OpenAIProvider(apiKey, model, maxTokens);
+  } else if (config.provider === 'openrouter') {
     const apiKey = config.apiKey || process.env.OPENROUTER_API_KEY;
 
     if (!apiKey) {
       throw new Error('OPENROUTER_API_KEY is required for openrouter provider');
     }
 
-    const model = config.model || 'anthropic/claude-3.5-sonnet';
-    const maxTokens = config.maxTokens || 4096;
-
     logger.info(`Creating OpenRouter provider (model: ${model})`);
-    return new OpenRouterProvider(apiKey, model, maxTokens);
-  }
-
-  if (config.provider === 'ollama') {
+    provider = new OpenRouterProvider(apiKey, model, maxTokens);
+  } else if (config.provider === 'ollama') {
     const baseUrl = config.baseUrl || 'http://localhost:11434';
-    const model = config.model || 'mistral';
-    const maxTokens = config.maxTokens || 4096;
 
     logger.info(`Creating Ollama provider (url: ${baseUrl}, model: ${model})`);
-    return new OllamaProvider(baseUrl, model, maxTokens);
+    provider = new OllamaProvider(baseUrl, model, maxTokens);
+  } else {
+    throw new Error(`Unsupported LLM provider: ${config.provider}`);
   }
 
-  throw new Error(`Unsupported LLM provider: ${config.provider}`);
+  // Cache the provider
+  providerCache.set(cacheKey, provider);
+  return provider;
+}
+
+function getDefaultModel(provider: string): string {
+  switch (provider) {
+    case 'openai': return 'gpt-4o';
+    case 'openrouter': return 'anthropic/claude-3.5-sonnet';
+    case 'ollama': return 'mistral';
+    default: return 'gpt-4o';
+  }
 }
 
 /**

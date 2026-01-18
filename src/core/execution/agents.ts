@@ -20,14 +20,38 @@ export function generateAgentId(): string {
 }
 
 /**
+ * Agent cache entry with TTL
+ */
+interface CachedAgent {
+  agent: Agent;
+  timestamp: number;
+}
+
+/**
  * AgentsService handles all agent-related operations
  */
 export class AgentsService {
   private db: DrizzleDB;
   private logger = getLogger();
+  
+  // LRU-style cache for resolved agents (by name)
+  private static agentCache = new Map<string, CachedAgent>();
+  private static readonly CACHE_TTL_MS = 60_000; // 1 minute TTL
+  private static readonly MAX_CACHE_SIZE = 50;
 
   constructor(db: DrizzleDB) {
     this.db = db;
+  }
+
+  /**
+   * Clear the agent cache (call after updates/activations)
+   */
+  static clearCache(agentName?: string): void {
+    if (agentName) {
+      AgentsService.agentCache.delete(agentName);
+    } else {
+      AgentsService.agentCache.clear();
+    }
   }
 
   /**
@@ -172,6 +196,12 @@ export class AgentsService {
 
     await this.db.update(agents).set(updateData).where(eq(agents.id, id));
 
+    // Invalidate cache for this agent
+    AgentsService.clearCache(existing.name);
+    if (updates.name && updates.name !== existing.name) {
+      AgentsService.clearCache(updates.name);
+    }
+
     const updated = await this.db.query.agents.findFirst({
       where: eq(agents.id, id),
     });
@@ -205,6 +235,9 @@ export class AgentsService {
       .set({ active: true, updatedAt: new Date() })
       .where(eq(agents.id, id));
 
+    // Invalidate cache for this agent name
+    AgentsService.clearCache(agent.name);
+
     const updated = await this.db.query.agents.findFirst({
       where: eq(agents.id, id),
     });
@@ -218,13 +251,37 @@ export class AgentsService {
 
   /**
    * Resolve an agent by name (gets active agent with that name)
+   * Uses caching for performance
    */
   async resolve(name: string): Promise<Agent | null> {
+    // Check cache first
+    const cached = AgentsService.agentCache.get(name);
+    const now = Date.now();
+    
+    if (cached && (now - cached.timestamp) < AgentsService.CACHE_TTL_MS) {
+      this.logger.debug(`Agent cache hit: ${name}`);
+      return cached.agent;
+    }
+
+    // Cache miss or expired - fetch from DB
     const agent = await this.db.query.agents.findFirst({
       where: and(eq(agents.name, name), eq(agents.active, true)),
     });
 
-    return agent ? this.mapAgent(agent) : null;
+    if (agent) {
+      const mappedAgent = this.mapAgent(agent);
+      
+      // Evict oldest if cache is full
+      if (AgentsService.agentCache.size >= AgentsService.MAX_CACHE_SIZE) {
+        const firstKey = AgentsService.agentCache.keys().next().value;
+        if (firstKey) AgentsService.agentCache.delete(firstKey);
+      }
+      
+      AgentsService.agentCache.set(name, { agent: mappedAgent, timestamp: now });
+      return mappedAgent;
+    }
+
+    return null;
   }
 
   /**

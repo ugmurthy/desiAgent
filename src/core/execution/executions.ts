@@ -125,8 +125,10 @@ export interface ListForDagOptions {
 
 /**
  * Execution event emitter (in-memory for Phase 2)
+ * Using per-execution channels for better performance
  */
 const executionEventBus = new EventEmitter();
+executionEventBus.setMaxListeners(100); // Allow more concurrent executions
 
 /**
  * ExecutionsService handles execution tracking and events
@@ -283,16 +285,23 @@ export class ExecutionsService {
       throw new NotFoundError('Execution', executionId);
     }
 
+    // Fast path: if already completed, no need to stream
+    if (execution.status === 'completed' || execution.status === 'failed') {
+      return;
+    }
+
     const eventQueue: ExecutionEvent[] = [];
     let isOpen = true;
 
+    // Use execution-specific channel (no filtering needed)
     const listener = (event: ExecutionEvent) => {
-      if (event.executionId === executionId && isOpen) {
+      if (isOpen) {
         eventQueue.push(event);
       }
     };
 
-    executionEventBus.on('execution:event', listener);
+    const channelName = `execution:${executionId}`;
+    executionEventBus.on(channelName, listener);
 
     try {
       while (isOpen) {
@@ -307,20 +316,12 @@ export class ExecutionsService {
             isOpen = false;
           }
         } else {
-          await new Promise((resolve) => setTimeout(resolve, 100));
-
-          const updatedExecution = await this.get(executionId).catch(() => null);
-          if (
-            updatedExecution &&
-            (updatedExecution.status === 'completed' ||
-              updatedExecution.status === 'failed')
-          ) {
-            isOpen = false;
-          }
+          // Reduced polling interval, no DB query (rely on events)
+          await new Promise((resolve) => setTimeout(resolve, 50));
         }
       }
     } finally {
-      executionEventBus.off('execution:event', listener);
+      executionEventBus.off(channelName, listener);
     }
   }
 
@@ -348,10 +349,16 @@ export class ExecutionsService {
   }
 
   /**
-   * Internal: Emit an execution event
+   * Internal: Emit an execution event (async, non-blocking)
+   * Uses execution-specific channels for reduced filtering overhead
    */
   static emitEvent(event: ExecutionEvent): void {
-    executionEventBus.emit('execution:event', event);
+    setImmediate(() => {
+      // Emit to execution-specific channel (primary)
+      executionEventBus.emit(`execution:${event.executionId}`, event);
+      // Also emit to global channel for backward compatibility
+      executionEventBus.emit('execution:event', event);
+    });
   }
 
   /**

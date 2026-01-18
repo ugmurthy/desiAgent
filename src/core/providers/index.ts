@@ -20,4 +20,4 @@ export type {
 export { OpenAIProvider } from './openai.js';
 export { OllamaProvider } from './ollama.js';
 export { OpenRouterProvider } from './openrouter.js';
-export { createLLMProvider, validateLLMSetup } from './factory.js';
+export { createLLMProvider, validateLLMSetup, clearProviderCache } from './factory.js';

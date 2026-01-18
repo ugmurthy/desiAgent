@@ -329,59 +329,23 @@ export class DAGsService {
 
       if (dag.validation.coverage === 'high') {
         dag = renumberSubTasks(dag);
-        const dagId = generateDAGId();
-
-        let dagTitle: string | null = null;
-        try {
-          const titleMasterAgent = await this.agentsService.resolve('TitleMaster');
-          if (titleMasterAgent) {
-            const titleResponse = await activeLLMProvider.chat({
-              messages: [
-                { role: 'system', content: titleMasterAgent.systemPrompt },
-                { role: 'user', content: truncate(goalText) },
-              ],
-              temperature: 0.7,
-              maxTokens: 100,
-            });
-
-            dagTitle = titleResponse.content.trim();
-            this.logger.info({ dagTitle }, 'Generated DAG title from TitleMaster');
-
-            planningAttempts.push({
-              attempt,
-              reason: 'title_master',
-              usage: titleResponse.usage,
-              costUsd: (titleResponse as any).costUsd,
-              generationStats: (titleResponse as any).generationStats,
-            });
-
-            if (titleResponse.usage) {
-              planningUsageTotal.promptTokens += titleResponse.usage.promptTokens ?? 0;
-              planningUsageTotal.completionTokens += titleResponse.usage.completionTokens ?? 0;
-              planningUsageTotal.totalTokens += titleResponse.usage.totalTokens ?? 0;
-            }
-            if ((titleResponse as any).costUsd != null) {
-              planningCostTotal += (titleResponse as any).costUsd;
-            }
-          } else {
-            this.logger.warn('TitleMaster agent not found or inactive');
-          }
-        } catch (titleError) {
-          this.logger.error({ err: titleError }, 'Error calling TitleMaster');
-        }
-
         dag.original_request = goalText;
+        const dagId = generateDAGId();
         const now = new Date();
 
-        await this.db.insert(dags).values({
+        // Run TitleMaster generation in parallel with preparing insert data
+        const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText);
+
+        // Prepare base insert data (doesn't need title yet)
+        const baseInsertData = {
           id: dagId,
-          status: 'success',
+          status: 'success' as const,
           result: dag as any,
           usage: usage as any,
           generationStats: generationStats,
           attempts: attempt,
           agentName,
-          dagTitle,
+          dagTitle: null as string | null,
           cronSchedule: cronSchedule || null,
           scheduleActive,
           timezone,
@@ -399,7 +363,37 @@ export class DAGsService {
           planningAttempts,
           createdAt: now,
           updatedAt: now,
-        });
+        };
+
+        // Wait for title generation (runs in parallel with data prep above)
+        const titleResult = await titleMasterPromise;
+        
+        if (titleResult) {
+          baseInsertData.dagTitle = titleResult.title;
+          
+          planningAttempts.push({
+            attempt,
+            reason: 'title_master',
+            usage: titleResult.usage,
+            costUsd: titleResult.costUsd,
+            generationStats: titleResult.generationStats,
+          });
+
+          if (titleResult.usage) {
+            planningUsageTotal.promptTokens += titleResult.usage.promptTokens ?? 0;
+            planningUsageTotal.completionTokens += titleResult.usage.completionTokens ?? 0;
+            planningUsageTotal.totalTokens += titleResult.usage.totalTokens ?? 0;
+          }
+          if (titleResult.costUsd != null) {
+            planningCostTotal += titleResult.costUsd;
+          }
+          
+          // Update the totals in insert data
+          baseInsertData.planningTotalUsage = planningUsageTotal;
+          baseInsertData.planningTotalCostUsd = planningCostTotal.toString();
+        }
+
+        await this.db.insert(dags).values(baseInsertData);
 
         this.logger.info({
           dagId,
@@ -930,6 +924,50 @@ export class DAGsService {
       .orderBy(dagSubSteps.taskId);
 
     return subSteps;
+  }
+
+  /**
+   * Generate DAG title asynchronously using TitleMaster agent
+   * Returns null if TitleMaster is not available or fails
+   */
+  private async generateTitleAsync(
+    llmProvider: LLMProvider,
+    goalText: string
+  ): Promise<{
+    title: string;
+    usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+    costUsd?: number;
+    generationStats?: Record<string, any>;
+  } | null> {
+    try {
+      const titleMasterAgent = await this.agentsService.resolve('TitleMaster');
+      if (!titleMasterAgent) {
+        this.logger.warn('TitleMaster agent not found or inactive');
+        return null;
+      }
+
+      const titleResponse = await llmProvider.chat({
+        messages: [
+          { role: 'system', content: titleMasterAgent.systemPrompt },
+          { role: 'user', content: truncate(goalText) },
+        ],
+        temperature: 0.7,
+        maxTokens: 100,
+      });
+
+      const title = titleResponse.content.trim();
+      this.logger.info({ dagTitle: title }, 'Generated DAG title from TitleMaster');
+
+      return {
+        title,
+        usage: titleResponse.usage,
+        costUsd: (titleResponse as any).costUsd,
+        generationStats: (titleResponse as any).generationStats,
+      };
+    } catch (titleError) {
+      this.logger.error({ err: titleError }, 'Error calling TitleMaster');
+      return null;
+    }
   }
 
   private mapDAG(record: any): DAG {

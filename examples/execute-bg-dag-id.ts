@@ -24,7 +24,7 @@ async function main() {
    
     // Execute the DAG
     console.log('\nExecuting DAG...');
-    const execution = await client.dags.execute("dag__nkhJVnWlwD29WxR2eMRZ");
+    const execution = await client.dags.execute("dag_hTNxi7GVnTrSRoQgSofDg");
 
     
     console.log('Execution started!');
