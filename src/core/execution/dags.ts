@@ -176,26 +176,31 @@ export class DAGsService {
       this.logger.info({ cronSchedule, nextRuns: validation.nextRuns }, 'Valid cron schedule provided');
     }
 
-    let activeLLMProvider: LLMProvider;
-    if (provider && model) {
-      this.logger.info({ requestedProvider: provider, requestedModel: model }, 'Creating custom LLM provider');
-      activeLLMProvider = createLLMProvider({ provider, model });
-
-      const validationResult = await activeLLMProvider.validateToolCallSupport(model);
-      if (!validationResult.supported) {
-        throw new ValidationError(
-          `Model ${model} does not support tool calling. ${validationResult.message || ''}`,
-          'model',
-          model
-        );
-      }
-    } else {
-      activeLLMProvider = this.llmProvider;
-    }
-
     const agent = await this.agentsService.resolve(agentName);
     if (!agent) {
       throw new NotFoundError('Agent', agentName);
+    }
+
+    // Determine model/provider with precedence: options → agent → defaults
+    const activeProvider = provider || agent.provider;
+    const activeModel = model || agent.model;
+
+    let activeLLMProvider: LLMProvider;
+    if (activeProvider && activeModel) {
+      this.logger.info({ requestedProvider: activeProvider, requestedModel: activeModel }, 'Creating custom LLM provider');
+      activeLLMProvider = createLLMProvider({ provider: activeProvider as 'openai' | 'openrouter' | 'ollama', model: activeModel });
+
+      const validationResult = await activeLLMProvider.validateToolCallSupport(activeModel);
+      if (!validationResult.supported) {
+        this.logger.warn({ model: activeModel, reason: validationResult.message }, 'Model does not support tool calling');
+        // throw new ValidationError(
+        //   `Model ${activeModel} does not support tool calling. ${validationResult.message || ''}`,
+        //   'model',
+        //   activeModel
+        // );
+      }
+    } else {
+      activeLLMProvider = this.llmProvider;
     }
 
     const toolDefinitions = this.toolRegistry.getAllDefinitions();

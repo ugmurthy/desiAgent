@@ -488,6 +488,9 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
                   subStepId: task.id,
                   status: 'completed',
                   durationMs: Date.now() - taskExecStartTime,
+                  usage: execResult.usage,
+                  costUsd: execResult.costUsd?.toString(),
+                  generationStats: execResult.generationStats,
                 },
               });
             } catch (error) {
