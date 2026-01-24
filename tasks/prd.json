@@ -1,0 +1,96 @@
+{
+  "project": "desiAgent",
+  "branchName": "ralph/init-db-service",
+  "description": "initDB Service - Programmatically create SQLite databases with the current schema",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Create initDB service file with types",
+      "description": "As a developer, I need a new service module to house the database initialization logic with proper type definitions.",
+      "acceptanceCriteria": [
+        "Create src/services/initDB.ts",
+        "Export async function initDB(dbPath: string, options?: InitDBOptions): Promise<InitDBResult>",
+        "Define InitDBOptions type with force?: boolean",
+        "Define InitDBResult type with { success: boolean; message: string; tables?: string[] }",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Validate database path",
+      "description": "As a developer, I want the service to validate the database path before attempting creation.",
+      "acceptanceCriteria": [
+        "Return error result if dbPath is empty or undefined",
+        "Return error result if parent directory does not exist",
+        "Return error result if database file exists and force is not set",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Handle force option for existing databases",
+      "description": "As a developer, I want to optionally force-overwrite an existing database.",
+      "acceptanceCriteria": [
+        "When force: true and file exists, delete the existing database file",
+        "Also delete associated -wal and -shm files if they exist",
+        "Proceed with database creation after deletion",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Generate SQL from schema",
+      "description": "As a developer, I want the service to generate CREATE TABLE/INDEX/VIEW SQL from the schema.",
+      "acceptanceCriteria": [
+        "Reuse SQL generation logic from scripts/create-db.ts",
+        "Generate CREATE TABLE statements for agents, dags, dag_executions, dag_sub_steps",
+        "Generate CREATE INDEX statements from schema indexes",
+        "Generate CREATE VIEW statement for executions view",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Create database with pragmas and execute schema",
+      "description": "As a developer, I want the database created with optimal settings and all tables.",
+      "acceptanceCriteria": [
+        "Create new SQLite database at dbPath using bun:sqlite",
+        "Execute PRAGMA journal_mode = WAL",
+        "Execute PRAGMA foreign_keys = ON",
+        "Execute all generated CREATE TABLE, INDEX, and VIEW statements",
+        "Close database connection after creation",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Return appropriate success or error responses",
+      "description": "As a developer, I want clear success/error responses from the service.",
+      "acceptanceCriteria": [
+        "On success return { success: true, message: 'Database created successfully', tables: [...] }",
+        "tables array includes all table names: agents, dags, dag_executions, dag_sub_steps",
+        "On any error return { success: false, message: '<descriptive error>' }",
+        "Never throw exceptions; always return error result",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

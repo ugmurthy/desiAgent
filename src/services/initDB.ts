@@ -1,0 +1,239 @@
+/**
+ * initDB Service
+ * Programmatically creates a SQLite database with all tables from the schema
+ */
+
+import { Database } from 'bun:sqlite';
+import { existsSync, unlinkSync } from 'fs';
+import { dirname } from 'path';
+import { getTableConfig } from 'drizzle-orm/sqlite-core';
+import type { SQLiteTable, SQLiteColumn } from 'drizzle-orm/sqlite-core';
+import * as schema from '../db/schema.js';
+
+export interface InitDBOptions {
+  force?: boolean;
+}
+
+export interface InitDBResult {
+  success: boolean;
+  message: string;
+  tables?: string[];
+}
+
+const TABLE_NAME_SYMBOL = Symbol.for('drizzle:Name');
+
+interface ColumnConfig {
+  name: string;
+  getSQLType: () => string;
+  notNull: boolean;
+  hasDefault: boolean;
+  default: unknown;
+  primary: boolean;
+}
+
+interface IndexConfig {
+  config: {
+    name: string;
+    columns: SQLiteColumn[];
+    unique: boolean;
+    where?: {
+      queryChunks: Array<{ value?: string[]; name?: string }>;
+    };
+  };
+}
+
+function generateColumnSQL(col: ColumnConfig): string {
+  let sql = `${col.name} ${col.getSQLType()}`;
+  
+  if (col.primary) {
+    sql += ' PRIMARY KEY';
+  }
+  
+  if (col.notNull && !col.primary) {
+    sql += ' NOT NULL';
+  }
+  
+  if (col.hasDefault && col.default !== undefined) {
+    const defaultVal = col.default;
+    if (typeof defaultVal === 'object' && defaultVal !== null && 'queryChunks' in defaultVal) {
+      const chunks = (defaultVal as { queryChunks: Array<{ value?: string[] }> }).queryChunks;
+      const sqlParts = chunks.map((c) => c.value?.[0] ?? '').join('');
+      sql += ` DEFAULT ${sqlParts}`;
+    } else if (typeof defaultVal === 'string') {
+      sql += ` DEFAULT '${defaultVal}'`;
+    } else if (typeof defaultVal === 'number' || typeof defaultVal === 'boolean') {
+      sql += ` DEFAULT ${defaultVal === true ? 1 : defaultVal === false ? 0 : defaultVal}`;
+    }
+  }
+  
+  return sql;
+}
+
+function generateForeignKeySQL(fk: {
+  columns: SQLiteColumn[];
+  foreignColumns: Array<{ table?: Record<symbol, string>; name: string }>;
+  onDelete?: string;
+  onUpdate?: string;
+}): string | null {
+  try {
+    const localCols = fk.columns.map((c: SQLiteColumn) => c.name).join(', ');
+    const foreignTable = fk.foreignColumns[0]?.table?.[TABLE_NAME_SYMBOL];
+    if (!foreignTable) return null;
+    const foreignCols = fk.foreignColumns.map((c) => c.name).join(', ');
+    let fkSql = `FOREIGN KEY (${localCols}) REFERENCES ${foreignTable}(${foreignCols})`;
+    if (fk.onDelete) fkSql += ` ON DELETE ${fk.onDelete.toUpperCase()}`;
+    if (fk.onUpdate) fkSql += ` ON UPDATE ${fk.onUpdate.toUpperCase()}`;
+    return fkSql;
+  } catch {
+    return null;
+  }
+}
+
+function generateIndexSQL(idx: IndexConfig, tableName: string): string {
+  const cfg = idx.config;
+  const idxCols = cfg.columns.map((c) => c.name).join(', ');
+  let idxSql = `CREATE ${cfg.unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS ${cfg.name} ON ${tableName}(${idxCols})`;
+  
+  if (cfg.where) {
+    const chunks = cfg.where.queryChunks;
+    const whereParts: string[] = [];
+    for (const chunk of chunks) {
+      if (chunk.value) {
+        whereParts.push(chunk.value.join(''));
+      } else if (chunk.name) {
+        whereParts.push(chunk.name);
+      }
+    }
+    const whereClause = whereParts.join('');
+    if (whereClause.trim()) {
+      idxSql += ` WHERE ${whereClause}`;
+    }
+  }
+  
+  return idxSql + ';';
+}
+
+function generateTableSQL(table: SQLiteTable): { createTable: string; indexes: string[]; tableName: string } {
+  const config = getTableConfig(table);
+  const columns: string[] = [];
+  const foreignKeys: string[] = [];
+  const indexes: string[] = [];
+
+  for (const col of config.columns) {
+    columns.push(generateColumnSQL(col as unknown as ColumnConfig));
+  }
+
+  for (const fk of config.foreignKeys) {
+    const fkSql = generateForeignKeySQL(fk as unknown as Parameters<typeof generateForeignKeySQL>[0]);
+    if (fkSql) foreignKeys.push(fkSql);
+  }
+
+  const createTable = `CREATE TABLE IF NOT EXISTS ${config.name} (\n  ${[...columns, ...foreignKeys].join(',\n  ')}\n);`;
+
+  for (const idx of config.indexes) {
+    indexes.push(generateIndexSQL(idx as unknown as IndexConfig, config.name));
+  }
+
+  return { createTable, indexes, tableName: config.name };
+}
+
+function generateViewSQL(): string {
+  return `
+CREATE VIEW IF NOT EXISTS executions AS
+SELECT
+  d.dag_title,
+  e.id,
+  e.dag_id,
+  e.original_request,
+  e.primary_intent,
+  e.status,
+  e.started_at,
+  e.completed_at,
+  e.duration_ms,
+  e.total_tasks,
+  e.completed_tasks,
+  e.failed_tasks,
+  e.waiting_tasks,
+  e.final_result,
+  e.synthesis_result,
+  e.suspended_reason,
+  e.suspended_at,
+  e.retry_count,
+  e.last_retry_at,
+  e.total_usage,
+  e.total_cost_usd,
+  e.created_at,
+  e.updated_at
+FROM dag_executions e
+LEFT JOIN dags d ON e.dag_id = d.id;`;
+}
+
+function generateAllSQL(): { sql: string; tableNames: string[] } {
+  const tables: SQLiteTable[] = [
+    schema.agents,
+    schema.dags,
+    schema.dagExecutions,
+    schema.dagSubSteps,
+  ];
+
+  const statements: string[] = [];
+  const tableNames: string[] = [];
+
+  for (const table of tables) {
+    const { createTable, indexes, tableName } = generateTableSQL(table);
+    statements.push(createTable);
+    statements.push(...indexes);
+    tableNames.push(tableName);
+  }
+
+  statements.push(generateViewSQL());
+
+  return { sql: statements.join('\n\n'), tableNames };
+}
+
+export async function initDB(dbPath: string, options?: InitDBOptions): Promise<InitDBResult> {
+  const force = options?.force ?? false;
+
+  if (!dbPath || dbPath.trim() === '') {
+    return { success: false, message: 'Database path is required' };
+  }
+
+  const dbDir = dirname(dbPath);
+  if (dbDir && dbDir !== '.' && !existsSync(dbDir)) {
+    return { success: false, message: `Parent directory does not exist: ${dbDir}` };
+  }
+
+  if (existsSync(dbPath)) {
+    if (force) {
+      try {
+        unlinkSync(dbPath);
+        if (existsSync(`${dbPath}-wal`)) unlinkSync(`${dbPath}-wal`);
+        if (existsSync(`${dbPath}-shm`)) unlinkSync(`${dbPath}-shm`);
+      } catch (err) {
+        return { success: false, message: `Failed to delete existing database: ${err instanceof Error ? err.message : String(err)}` };
+      }
+    } else {
+      return { success: false, message: `Database file already exists: ${dbPath}. Use force option to overwrite.` };
+    }
+  }
+
+  try {
+    const sqlite = new Database(dbPath);
+    
+    sqlite.exec('PRAGMA journal_mode = WAL;');
+    sqlite.exec('PRAGMA foreign_keys = ON;');
+    
+    const { sql, tableNames } = generateAllSQL();
+    sqlite.exec(sql);
+    
+    sqlite.close();
+
+    return {
+      success: true,
+      message: 'Database created successfully',
+      tables: tableNames,
+    };
+  } catch (err) {
+    return { success: false, message: `Failed to create database: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
