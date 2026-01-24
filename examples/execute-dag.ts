@@ -24,7 +24,7 @@ async function main() {
     console.log('Creating DAG from goal...\n');
 
     const createResult = await client.dags.createFromGoal({
-      goalText: 'Get latest news on Athletics, Badminton,Tennis and Cricket',
+      goalText: 'Create a tutorial on pre-processing and processing tools on drift wood to create handicrafts. Provide complete informations on how to clean, handle, process drift wood. Provide as much details on materials and how to use what is commonly availble - write the compiled tutorial to drift-wood.md',
       agentName: 'DecomposerV8',
       temperature: 0.7,
     });

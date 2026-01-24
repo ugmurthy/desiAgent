@@ -175,18 +175,24 @@ export class DAGsService {
     } = options;
 
     const scheduleActive = inputScheduleActive ?? !!cronSchedule;
+    const showGoalText = truncateForLog(goalText);
+
+    this.logger.info({ agentName, goalText: showGoalText }, 'Create DAG from goal');
 
     if (cronSchedule) {
       const validation = validateCronExpression(cronSchedule);
       if (!validation.valid) {
         throw new ValidationError(`Invalid cron expression: ${validation.error}`, 'cronSchedule', cronSchedule);
       }
-      this.logger.info({ cronSchedule, nextRuns: validation.nextRuns }, 'Valid cron schedule provided');
+      this.logger.debug({ cronSchedule, nextRuns: validation.nextRuns }, '╰─Valid cron schedule provided');
     }
 
     const agent = await this.agentsService.resolve(agentName);
     if (!agent) {
       throw new NotFoundError('Agent', agentName);
+    } else {
+      this.logger.debug({ agentName, provider,model }, '╰─Agent resolved');
+      this.logger.debug({ agent }, '╰─Agent details');  
     }
 
     // Determine model/provider with precedence: options → agent → defaults
@@ -201,24 +207,23 @@ export class DAGsService {
       const validationResult = await activeLLMProvider.validateToolCallSupport(activeModel);
       if (!validationResult.supported) {
         this.logger.warn({ model: activeModel, reason: validationResult.message }, 'Model does not support tool calling');
-        // throw new ValidationError(
-        //   `Model ${activeModel} does not support tool calling. ${validationResult.message || ''}`,
-        //   'model',
-        //   activeModel
-        // );
       }
     } else {
       activeLLMProvider = this.llmProvider;
+      this.logger.debug('Using default LLM provider');
     }
 
     const toolDefinitions = this.toolRegistry.getAllDefinitions();
     const systemPrompt = agent.systemPrompt
       .replace(/\{\{tools\}\}/g, JSON.stringify(toolDefinitions))
       .replace(/\{\{currentDate\}\}/g, new Date().toLocaleString());
+    if (systemPrompt.length < 100) {
+      this.logger.warn('System prompt is empty after replacement');
+      throw new ValidationError('System prompt seems short! ', 'systemPrompt', systemPrompt);
+    }
 
     let currentGoalText = goalText.replace(/\{\{currentDate\}\}/g, new Date().toLocaleString());
-    const showGoalText = truncateForLog(goalText);
-
+    
     let attempt = 0;
     const maxAttempts = 3;
 
@@ -229,8 +234,9 @@ export class DAGsService {
 
     while (attempt < maxAttempts) {
       attempt++;
-      this.logger.info({ attempt, agentName, goalText: showGoalText }, 'Creating DAG with LLM inference');
-
+      this.logger.info(`attempt number ${attempt}`)
+      //this.logger.info({ attempt, agentName, goalText: showGoalText }, 'Creating DAG with LLM inference');
+      //this.logger.info({ temperature,maxTokens, systemPromptPreview: systemPrompt.slice(0,80) }, 'System prompt preview');
       const response = await activeLLMProvider.chat({
         messages: [
           { role: 'system', content: systemPrompt },
@@ -274,7 +280,7 @@ export class DAGsService {
           generationStats: attemptGenStats,
         });
 
-        this.logger.error({ err: parseError, attempt, responsePreview: response.content.slice(0, 500) }, 'Failed to parse LLM response as JSON');
+        this.logger.error({ err: parseError, attempt, responsePreview: response.content.slice(0, 80) }, 'Failed to parse LLM response as JSON');
 
         if (attempt >= maxAttempts) {
           throw new ValidationError(
@@ -340,10 +346,10 @@ export class DAGsService {
         dag.original_request = goalText;
         const dagId = generateDAGId();
         const now = new Date();
-
+        this.logger.info({dagId},"DagID Generated")
         // Run TitleMaster generation in parallel with preparing insert data
         const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText);
-
+        
         // Prepare base insert data (doesn't need title yet)
         const baseInsertData = {
           id: dagId,
@@ -375,8 +381,9 @@ export class DAGsService {
 
         // Wait for title generation (runs in parallel with data prep above)
         const titleResult = await titleMasterPromise;
-        
+       
         if (titleResult) {
+          this.logger.info('TitleMaster generated Result');
           baseInsertData.dagTitle = titleResult.title;
           
           planningAttempts.push({
@@ -400,8 +407,14 @@ export class DAGsService {
           baseInsertData.planningTotalUsage = planningUsageTotal;
           baseInsertData.planningTotalCostUsd = planningCostTotal.toString();
         }
-
-        await this.db.insert(dags).values(baseInsertData);
+        this.logger.info('Base insert data prepared');
+        try {
+          await this.db.insert(dags).values(baseInsertData);
+        } catch (dbError) {
+          const errorMessage = dbError instanceof Error ? dbError.message : String(dbError);
+          this.logger.error({ err: dbError, dagId, goalText: showGoalText }, 'Failed to insert DAG into database');
+          throw new Error(`Database insert failed for DAG ${dagId}: ${errorMessage}`);
+        }
 
         this.logger.info({
           dagId,

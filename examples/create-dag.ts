@@ -10,20 +10,21 @@
  */
 
 import { setupDesiAgent } from '../src/index.js';
+const goal = 'Create a tutorial on pre-processing and processing tools on drift wood to create handicrafts. Provide complete informations on how to clean, handle, process drift wood. Provide as much details on materials and how to use what is commonly availble - write the compiled tutorial to drift-wood.md'
 
 async function main() {
   const client = await setupDesiAgent({
     llmProvider: process.env.LLM_PROVIDER,
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: process.env.LLM_MODEL,
-    logLevel: 'info',
+    logLevel: 'debug',
   });
 
   try {
     console.log('Creating DAG from goal...\n');
 
     const result = await client.dags.createFromGoal({
-      goalText: 'Get latest news on Athletics and Cricket',
+      goalText: goal,
       agentName: 'DecomposerV8',
       temperature: 0.7,
     });

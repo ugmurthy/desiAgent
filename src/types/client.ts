@@ -307,6 +307,7 @@ export interface DesiAgentClient {
   tools: ToolsService;
   artifacts: ArtifactsService;
   costs: CostsService;
+  version: string
 
   // Task execution
   executeTask(agent: Agent, task: string, files?: Buffer[]): Promise<any>;

@@ -7,6 +7,7 @@
 
 import type { DesiAgentConfig, ProcessedDesiAgentConfig } from './types/config.js';
 import { DesiAgentConfigSchema } from './types/config.js';
+import packageJson from '../package.json' with { type: 'json' };
 import type { DesiAgentClient } from './types/index.js';
 import {
   ConfigurationError,
@@ -33,6 +34,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
   tools: ToolsService;
   artifacts: ArtifactsService;
   costs: CostsService;
+  version: string = packageJson.version;
   private logger = getLogger();
 
   constructor(
@@ -96,10 +98,13 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     initializeLogger(validatedConfig.logLevel);
     const logger = getLogger();
 
-    logger.info('Initializing desiAgent', {
+    logger.info(`desiAgent version ${packageJson.version}`);
+   
+    logger.info( {
       provider: validatedConfig.llmProvider,
       model: validatedConfig.modelName,
-    });
+      logLevel: validatedConfig.logLevel,
+    },'Initializing desiAgent');
 
     // Initialize database
     const db = getDatabase(validatedConfig.databasePath);
@@ -148,7 +153,7 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       executionsService,
       toolsService,
       artifactsService,
-      costsService
+      costsService,
     );
 
     logger.info('desiAgent initialized successfully', {

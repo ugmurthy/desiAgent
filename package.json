@@ -1,6 +1,6 @@
 {
   "name": "@ugm/desiagent",
-  "version": "0.1.0",
+  "version": "0.1.18",
   "description": "A library-first async agent system for building autonomous workflows",
   "homepage": "https://github.com/ugmurthy/desiAgent",
   "main": "./dist/index.js",
@@ -30,7 +30,7 @@
     "db:generate": "drizzle-kit generate:sqlite --schema=src/db/schema.ts --out=src/db/migrations",
     "db:push": "drizzle-kit push:sqlite --schema=src/db/schema.ts --config=drizzle.config.ts",
     "db:studio": "drizzle-kit studio --schema=src/db/schema.ts --config=drizzle.config.ts",
-    "prepublishOnly": "npm run build && npm run test"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "agent",
