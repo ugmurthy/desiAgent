@@ -53,8 +53,11 @@ export class BashTool extends BaseTool<any, BashOutput> {
   description = 'Execute a bash command with safety safeguards';
   inputSchema: any = bashInputSchema;
 
-  private readonly ARTIFACTS_DIR = resolve('./artifacts');
   private logger = getLogger();
+
+  private getArtifactsDir(ctx: ToolContext): string {
+    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+  }
 
   /**
    * Validate command for dangerous patterns
@@ -106,7 +109,7 @@ export class BashTool extends BaseTool<any, BashOutput> {
 
     const workingDir = input.cwd
       ? resolve(input.cwd)
-      : this.ARTIFACTS_DIR;
+      : this.getArtifactsDir(ctx);
     const timeoutMs = input.timeoutMs ?? 30000;
 
     this.logger.info(

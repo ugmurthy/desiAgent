@@ -57,6 +57,7 @@ export interface DAGExecutorConfig {
   db: DrizzleDB;
   llmProvider: LLMProvider;
   toolRegistry: ToolRegistry;
+  artifactsDir?: string;
 }
 
 /**
@@ -109,12 +110,14 @@ export class DAGExecutor {
   private db: DrizzleDB;
   private llmProvider: LLMProvider;
   private toolRegistry: ToolRegistry;
+  private artifactsDir: string;
   private logger = getLogger();
 
   constructor(config: DAGExecutorConfig) {
     this.db = config.db;
     this.llmProvider = config.llmProvider;
     this.toolRegistry = config.toolRegistry;
+    this.artifactsDir = config.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
 
     this.logger.debug({
       provider: this.llmProvider.name,
@@ -471,6 +474,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           abortSignal: new AbortController().signal,
           executionId: execId,
           subStepId: task.id,
+          artifactsDir: this.artifactsDir,
           emitEvent: {
             progress: (message: string) => {
               this.emitEventIfEnabled(execConfig, {

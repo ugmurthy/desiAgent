@@ -9,7 +9,7 @@ import * as cheerio from 'cheerio';
 import { BaseTool, type ToolContext } from './base.js';
 
 const webSearchInputSchema = z.object({
-  query: z.string().describe('The search query - could be list of bulleted queries'),
+  query: z.union([z.string(), z.array(z.string())]).describe('The search query - string or array of strings'),
   limit: z.number().int().min(1).max(20).default(10).describe('Number of results to return per query'),
 });
 
@@ -27,10 +27,12 @@ export class WebSearchTool extends BaseTool<any, SearchResult[]> {
   inputSchema: any = webSearchInputSchema;
 
   async execute(input: WebSearchInput, ctx: ToolContext): Promise<SearchResult[]> {
-    ctx.logger.info(`╰─Searching web...input for ${input.query.slice(0, 50)}...`);
-    ctx.emitEvent?.progress?.(`🔎 for ${input.query.slice(0, 50)}...`);
+    const queryString = Array.isArray(input.query) ? input.query.join('\n') : input.query;
     
-    const queries = this.extractSearchQueries(input.query);
+    ctx.logger.info(`╰─Searching web...input for ${queryString.slice(0, 50)}...`);
+    ctx.emitEvent?.progress?.(`🔎 for ${queryString.slice(0, 50)}...`);
+    
+    const queries = this.extractSearchQueries(queryString);
     const allResults: SearchResult[][] = [];
 
     for (const query of queries) {
@@ -48,10 +50,10 @@ export class WebSearchTool extends BaseTool<any, SearchResult[]> {
         const html = await response.text();
         const results = this.parseSearchResults(html, input.limit);
 
-        ctx.logger.info(`╰─Found ${results.length} search results for query: ${query.slice(0, 50)}...`);
+        ctx.logger.info(`  ╰─Found ${results.length} search results for query: ${query.slice(0, 50)}...`);
         allResults.push(results);
       } catch (error) {
-        ctx.logger.error({ err: error, query }, '╰─Web search failed');
+        ctx.logger.error({ err: error, query }, '  ╰─Web search failed');
         throw error;
       }
     }

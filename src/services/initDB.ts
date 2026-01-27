@@ -4,11 +4,24 @@
  */
 
 import { Database } from 'bun:sqlite';
-import { existsSync, unlinkSync } from 'fs';
-import { dirname } from 'path';
+import { existsSync, unlinkSync, readFileSync, mkdirSync } from 'fs';
+import { dirname, resolve } from 'path';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import type { SQLiteTable, SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import * as schema from '../db/schema.js';
+
+interface AgentSeedData {
+  id: string;
+  name: string;
+  version: string;
+  prompt_template: string;
+  provider: string | null;
+  model: string | null;
+  active: boolean;
+  metadata: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface InitDBOptions {
   force?: boolean;
@@ -18,6 +31,9 @@ export interface InitDBResult {
   success: boolean;
   message: string;
   tables?: string[];
+  views?: string[];
+  agentsSeeded?: number;
+  artifactsDir?: string;
 }
 
 const TABLE_NAME_SYMBOL = Symbol.for('drizzle:Name');
@@ -191,6 +207,41 @@ function generateAllSQL(): { sql: string; tableNames: string[] } {
   return { sql: statements.join('\n\n'), tableNames };
 }
 
+function seedAgents(sqlite: Database, seedPath?: string): number {
+  const defaultSeedPath = resolve(dirname(import.meta.dir), '../seed/agents.json');
+  const agentsFile = seedPath ?? defaultSeedPath;
+  
+  if (!existsSync(agentsFile)) {
+    return 0;
+  }
+
+  const agentsData: AgentSeedData[] = JSON.parse(readFileSync(agentsFile, 'utf-8'));
+  
+  const insertStmt = sqlite.prepare(`
+    INSERT INTO agents (id, name, version, prompt_template, provider, model, active, metadata, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  let count = 0;
+  for (const agent of agentsData) {
+    insertStmt.run(
+      agent.id,
+      agent.name,
+      agent.version,
+      agent.prompt_template,
+      agent.provider,
+      agent.model,
+      agent.active ? 1 : 0,
+      JSON.stringify(agent.metadata),
+      Math.floor(new Date(agent.created_at).getTime() / 1000),
+      Math.floor(new Date(agent.updated_at).getTime() / 1000)
+    );
+    count++;
+  }
+
+  return count;
+}
+
 export async function initDB(dbPath: string, options?: InitDBOptions): Promise<InitDBResult> {
   const force = options?.force ?? false;
 
@@ -226,12 +277,23 @@ export async function initDB(dbPath: string, options?: InitDBOptions): Promise<I
     const { sql, tableNames } = generateAllSQL();
     sqlite.exec(sql);
     
+    const agentsSeeded = seedAgents(sqlite);
+    
     sqlite.close();
+
+    // Create artifacts directory as sibling of database file
+    const artifactsDir = resolve(dirname(dbPath), 'artifacts');
+    if (!existsSync(artifactsDir)) {
+      mkdirSync(artifactsDir, { recursive: true });
+    }
 
     return {
       success: true,
       message: 'Database created successfully',
       tables: tableNames,
+      views: ['executions'],
+      agentsSeeded,
+      artifactsDir
     };
   } catch (err) {
     return { success: false, message: `Failed to create database: ${err instanceof Error ? err.message : String(err)}` };

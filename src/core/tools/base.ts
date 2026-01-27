@@ -25,6 +25,7 @@ export interface ToolContext {
   abortSignal?: AbortSignal;
   executionId?: string;
   subStepId?: string;
+  artifactsDir?: string;
   emitEvent?: {
     started?: (message: string) => void;
     progress?: (message: string) => void;

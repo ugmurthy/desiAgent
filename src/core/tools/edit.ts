@@ -29,16 +29,19 @@ export class EditTool extends BaseTool<any, EditOutput> {
   description = 'Edit an existing file by replacing specific text with new text';
   inputSchema: any = editInputSchema;
 
-  private readonly ARTIFACTS_DIR = resolve(process.env.ARTIFACTS_DIR || './artifacts');
+  private getArtifactsDir(ctx: ToolContext): string {
+    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+  }
 
   async execute(input: EditInput, ctx: ToolContext): Promise<EditOutput> {
-    const fullPath = resolve(this.ARTIFACTS_DIR, input.path);
+    const ARTIFACTS_DIR = this.getArtifactsDir(ctx);
+    const fullPath = resolve(ARTIFACTS_DIR, input.path);
 
-    if (!fullPath.startsWith(this.ARTIFACTS_DIR)) {
+    if (!fullPath.startsWith(ARTIFACTS_DIR)) {
       throw new Error('Invalid path: must be within artifacts directory');
     }
 
-    const safePath = fullPath.substring(this.ARTIFACTS_DIR.length + 1);
+    const safePath = fullPath.substring(ARTIFACTS_DIR.length + 1);
 
     ctx.logger.info(`Editing file: ${safePath}`);
 

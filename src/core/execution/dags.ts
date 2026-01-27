@@ -56,6 +56,7 @@ export interface DAGsServiceDeps {
   toolRegistry: ToolRegistry;
   agentsService: AgentsService;
   scheduler?: DagScheduler;
+  artifactsDir?: string;
 }
 
 export interface CreateDAGFromGoalOptions {
@@ -150,6 +151,7 @@ export class DAGsService {
   private toolRegistry: ToolRegistry;
   private agentsService: AgentsService;
   private scheduler?: DagScheduler;
+  private artifactsDir: string;
   private logger = getLogger();
 
   constructor(deps: DAGsServiceDeps) {
@@ -158,6 +160,7 @@ export class DAGsService {
     this.toolRegistry = deps.toolRegistry;
     this.agentsService = deps.agentsService;
     this.scheduler = deps.scheduler;
+    this.artifactsDir = deps.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
   }
 
   async createFromGoal(options: CreateDAGFromGoalOptions): Promise<DAGPlanningResult> {
@@ -558,6 +561,7 @@ export class DAGsService {
       db: this.db,
       llmProvider: this.llmProvider,
       toolRegistry: this.toolRegistry,
+      artifactsDir: this.artifactsDir,
     });
 
     // Start execution in background - don't await
@@ -626,6 +630,7 @@ export class DAGsService {
       db: this.db,
       llmProvider: this.llmProvider,
       toolRegistry: this.toolRegistry,
+      artifactsDir: this.artifactsDir,
     });
 
     // Start execution in background - don't await
@@ -689,6 +694,7 @@ export class DAGsService {
       db: this.db,
       llmProvider: this.llmProvider,
       toolRegistry: this.toolRegistry,
+      artifactsDir: this.artifactsDir,
     });
 
     // Start execution in background - don't await

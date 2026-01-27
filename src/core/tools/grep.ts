@@ -45,7 +45,9 @@ export class GrepTool extends BaseTool<any, GrepOutput> {
     'Search file contents with regex patterns in the artifacts directory. Returns matching lines with file paths and line numbers.';
   inputSchema: any = grepInputSchema;
 
-  private readonly ARTIFACTS_DIR = resolve(process.env.ARTIFACTS_DIR || './artifacts');
+  private getArtifactsDir(ctx: ToolContext): string {
+    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+  }
 
   private isBinaryFile(buffer: Buffer): boolean {
     const sampleSize = Math.min(buffer.length, 8000);
@@ -62,10 +64,11 @@ export class GrepTool extends BaseTool<any, GrepOutput> {
   }
 
   async execute(input: GrepInput, ctx: ToolContext): Promise<GrepOutput> {
+    const ARTIFACTS_DIR = this.getArtifactsDir(ctx);
     const safePath = this.sanitizePath(input.path);
-    const fullPath = join(this.ARTIFACTS_DIR, safePath);
+    const fullPath = join(ARTIFACTS_DIR, safePath);
 
-    if (!fullPath.startsWith(this.ARTIFACTS_DIR)) {
+    if (!fullPath.startsWith(ARTIFACTS_DIR)) {
       throw new Error('Invalid path: must be within artifacts directory');
     }
 
@@ -151,8 +154,8 @@ export class GrepTool extends BaseTool<any, GrepOutput> {
             totalMatches++;
 
             if (matches.length < input.maxResults) {
-              const relativePath = filePath.startsWith(this.ARTIFACTS_DIR)
-                ? filePath.slice(this.ARTIFACTS_DIR.length + 1)
+              const relativePath = filePath.startsWith(ARTIFACTS_DIR)
+                ? filePath.slice(ARTIFACTS_DIR.length + 1)
                 : filePath;
 
               matches.push({

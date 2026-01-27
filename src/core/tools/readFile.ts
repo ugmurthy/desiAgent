@@ -43,10 +43,11 @@ export class ReadFileTool extends BaseTool<any, ReadFileOutput> {
     'Read content from a file in the artifacts directory. Supports text files.';
   inputSchema: any = readFileInputSchema;
 
-  private artifactsDir = process.env.ARTIFACTS_DIR || './artifacts';
-  private readonly ARTIFACTS_DIR =  resolve(this.artifactsDir);
-
   private logger = getLogger();
+
+  private getArtifactsDir(ctx: ToolContext): string {
+    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+  }
 
   /**
    * Execute file read operation
@@ -55,12 +56,14 @@ export class ReadFileTool extends BaseTool<any, ReadFileOutput> {
     input: ReadFileInput,
     ctx: ToolContext
   ): Promise<ReadFileOutput> {
+    const ARTIFACTS_DIR = this.getArtifactsDir(ctx);
+    
     // Security: prevent path traversal
     const safePath = input.path.replace(/\.\./g, '');
-    const fullPath = join(this.ARTIFACTS_DIR, safePath);
+    const fullPath = join(ARTIFACTS_DIR, safePath);
 
     // Ensure path is within artifacts directory
-    if (!fullPath.startsWith(this.ARTIFACTS_DIR)) {
+    if (!fullPath.startsWith(ARTIFACTS_DIR)) {
       throw new Error('Invalid path: must be within artifacts directory');
     }
 

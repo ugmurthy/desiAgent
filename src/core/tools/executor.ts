@@ -9,6 +9,7 @@ import type { ToolResult } from '../../types/index.js';
 import type { ToolRegistry } from './registry.js';
 import type { ToolContext } from './base.js';
 import { ToolError } from '../../errors/index.js';
+import { resolve } from 'path';
 
 /**
  * Tool executor for running tools during execution
@@ -16,9 +17,11 @@ import { ToolError } from '../../errors/index.js';
 export class ToolExecutor {
   private registry: ToolRegistry;
   private logger = getLogger();
+  private artifactsDir: string;
 
-  constructor(registry: ToolRegistry) {
+  constructor(registry: ToolRegistry, artifactsDir?: string) {
     this.registry = registry;
+    this.artifactsDir = artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
   }
 
   /**
@@ -47,6 +50,7 @@ export class ToolExecutor {
       onEvent: (event, data) => {
         this.logger.debug(`Tool event: ${event}`, data);
       },
+      artifactsDir: resolve(this.artifactsDir),
     };
 
     try {

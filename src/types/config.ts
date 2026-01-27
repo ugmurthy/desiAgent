@@ -20,6 +20,9 @@ export const DesiAgentConfigSchema = z.object({
     return `${home}/.desiAgent/data/agent.db`;
   }),
 
+  // Artifacts directory (defaults to sibling of database file)
+  artifactsDir: z.string().optional(),
+
   // LLM Provider
   llmProvider: z.enum(['openai', 'openrouter', 'ollama']),
   openaiApiKey: z.string().optional(),
@@ -63,6 +66,9 @@ export interface DesiAgentConfig {
   // Database location (auto-created if not exists)
   databasePath?: string;
 
+  // Artifacts directory (defaults to sibling of database file)
+  artifactsDir?: string;
+
   // LLM Provider setup
   llmProvider: LLMProvider;
   openaiApiKey?: string;
@@ -90,6 +96,7 @@ export interface DesiAgentConfig {
  */
 export interface ProcessedDesiAgentConfig extends DesiAgentConfig {
   databasePath: string;
+  artifactsDir: string;
   agentDefinitionsPath: string;
   logLevel: LogLevel;
   autoStartScheduler: boolean;

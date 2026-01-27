@@ -15,6 +15,7 @@ import {
 } from './errors/index.js';
 import { initializeLogger, getLogger } from './util/logger.js';
 import { getDatabase, closeDatabase } from './db/client.js';
+import { dirname, resolve } from 'path';
 import { AgentsService } from './core/execution/agents.js';
 import { DAGsService } from './core/execution/dags.js';
 import { ExecutionsService } from './core/execution/executions.js';
@@ -110,6 +111,11 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     const db = getDatabase(validatedConfig.databasePath);
     logger.info('Database initialized');
 
+    // Compute artifacts directory from config or database path
+    const artifactsDir = validatedConfig.artifactsDir 
+      || resolve(dirname(validatedConfig.databasePath), 'artifacts');
+    logger.debug({ artifactsDir }, 'Artifacts directory configured');
+
     // Initialize services
     const agentsService = new AgentsService(db);
     const executionsService = new ExecutionsService(db);
@@ -117,7 +123,7 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     // Initialize tool registry
     const toolRegistry = createToolRegistry();
     const toolsService = new ToolsService(toolRegistry);
-    const toolExecutor = new ToolExecutor(toolRegistry);
+    const toolExecutor = new ToolExecutor(toolRegistry, artifactsDir);
 
     // Initialize LLM provider
     const llmProviderConfig = {
@@ -138,10 +144,11 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       llmProvider,
       toolRegistry,
       agentsService,
+      artifactsDir,
     });
 
     // Initialize artifacts service
-    const artifactsService = new ArtifactsService();
+    const artifactsService = new ArtifactsService(artifactsDir);
 
     // Initialize costs service
     const costsService = new CostsService(db);
@@ -289,3 +296,6 @@ export {
   TimeoutError,
   InitializationError,
 } from './errors/index.js';
+
+// Database initialization
+export { initDB, type InitDBOptions, type InitDBResult } from './services/initDB.js';

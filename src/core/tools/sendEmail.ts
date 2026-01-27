@@ -52,8 +52,8 @@ export class SendEmailTool extends BaseTool<any, SendEmailOutput> {
 
   private transporter: Transporter | null = null;
   
-  private resolveAttachmentPath(filePath:string): string {
-    const artifactsDir = process.env.ARTIFACTS_DIR || './artifacts';
+  private resolveAttachmentPath(filePath: string, ctx: ToolContext): string {
+    const artifactsDir = ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
     return path.resolve(artifactsDir, path.basename(filePath));
   }
 
@@ -127,7 +127,7 @@ export class SendEmailTool extends BaseTool<any, SendEmailOutput> {
       if (input.attachments && input.attachments.length > 0) {
         mailOptions.attachments = input.attachments.map((att) => ({
           filename: att.filename,
-          path: att.path ? this.resolveAttachmentPath(att.path) : undefined,
+          path: att.path ? this.resolveAttachmentPath(att.path, ctx) : undefined,
           content: att.content,
           contentType: att.contentType,
           encoding: att.encoding as 'base64' | undefined,

@@ -39,9 +39,11 @@ export class WriteFileTool extends BaseTool<any, WriteFileOutput> {
   description = 'Write content to a file in the artifacts directory';
   inputSchema: any = writeFileInputSchema;
   
-  private artifactsDir = process.env.ARTIFACTS_DIR || './artifacts';
-  private readonly ARTIFACTS_DIR =  resolve(this.artifactsDir);
   private logger = getLogger();
+
+  private getArtifactsDir(ctx: ToolContext): string {
+    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+  }
 
   /**
    * Strip outermost code fence from markdown
@@ -100,15 +102,17 @@ export class WriteFileTool extends BaseTool<any, WriteFileOutput> {
     input: WriteFileInput,
     ctx: ToolContext
   ): Promise<WriteFileOutput> {
+    const ARTIFACTS_DIR = this.getArtifactsDir(ctx);
+    
     // Security: prevent path traversal
-    const fullPath = resolve(this.ARTIFACTS_DIR, input.path);
+    const fullPath = resolve(ARTIFACTS_DIR, input.path);
 
     // Ensure path is within artifacts directory
-    if (!fullPath.startsWith(this.ARTIFACTS_DIR)) {
+    if (!fullPath.startsWith(ARTIFACTS_DIR)) {
       throw new Error('Invalid path: must be within artifacts directory');
     }
 
-    const safePath = fullPath.substring(this.ARTIFACTS_DIR.length + 1);
+    const safePath = fullPath.substring(ARTIFACTS_DIR.length + 1);
 
     //this.logger.info(`Writing file: ${safePath}`);
 

@@ -38,9 +38,12 @@ export class GlobTool extends BaseTool<any, GlobOutput> {
     'Find files matching a glob pattern in the artifacts directory. Returns file paths relative to artifacts directory.';
   inputSchema: any = globInputSchema;
 
-  private readonly ARTIFACTS_DIR = resolve(process.env.ARTIFACTS_DIR || './artifacts');
+  private getArtifactsDir(ctx: ToolContext): string {
+    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+  }
 
   async execute(input: GlobInput, ctx: ToolContext): Promise<GlobOutput> {
+    const ARTIFACTS_DIR = this.getArtifactsDir(ctx);
     const { pattern, ignore, limit } = input;
 
     if (pattern.includes('..')) {
@@ -54,11 +57,11 @@ export class GlobTool extends BaseTool<any, GlobOutput> {
       const allFiles: string[] = [];
 
       for await (const file of glob.scan({
-        cwd: this.ARTIFACTS_DIR,
+        cwd: ARTIFACTS_DIR,
         onlyFiles: true,
       })) {
-        const absolutePath = resolve(this.ARTIFACTS_DIR, file);
-        if (!absolutePath.startsWith(this.ARTIFACTS_DIR)) {
+        const absolutePath = resolve(ARTIFACTS_DIR, file);
+        if (!absolutePath.startsWith(ARTIFACTS_DIR)) {
           throw new Error('Invalid match: path escapes artifacts directory');
         }
 
@@ -73,7 +76,7 @@ export class GlobTool extends BaseTool<any, GlobOutput> {
         }
 
         if (!shouldIgnore) {
-          allFiles.push(relative(this.ARTIFACTS_DIR, absolutePath));
+          allFiles.push(relative(ARTIFACTS_DIR, absolutePath));
         }
       }
 
