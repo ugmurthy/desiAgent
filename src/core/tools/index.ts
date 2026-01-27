@@ -15,6 +15,7 @@ export { GlobTool } from './glob.js';
 export { GrepTool } from './grep.js';
 export { EditTool } from './edit.js';
 export { SendEmailTool } from './sendEmail.js';
+export { ReadEmailTool } from './readEmail.js';
 export { SendWebhookTool } from './sendWebhook.js';
 export { LlmExecuteTool } from './llmExecute.js';
 export { ToolRegistry, createToolRegistry } from './registry.js';
