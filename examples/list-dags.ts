@@ -17,8 +17,10 @@ async function main() {
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'openai/gpt-4o',
     logLevel: 'warn',
+    databasePath: process.env.DATABASE_PATH
   });
 
+ 
   try {
     // List all DAGs
     console.log('Listing all DAGs...\n');
@@ -30,13 +32,13 @@ async function main() {
       console.log(`Found ${allDags.length} DAG(s):\n`);
 
       for (const dag of allDags) {
-        console.log(`ID: ${dag.id} : ${dag.createdAt}: ${dag.objective}`);
+        console.log(`ID: ${dag.id} : ${dag.objective}`);
         
         
         if (dag.metadata?.cronSchedule) {
           console.log(`  Schedule: ${dag.metadata.cronSchedule} (active: ${dag.metadata.scheduleActive})`);
         }
-        console.log('');
+        
       }
     }
 

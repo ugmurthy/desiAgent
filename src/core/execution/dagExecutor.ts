@@ -17,6 +17,7 @@ import { ExecutionsService } from './executions.js';
 import { ExecutionEventType } from '../../types/execution.js';
 import { getLogger } from '../../util/logger.js';
 
+
 export interface SubTask {
   id: string;
   description: string;
@@ -442,6 +443,8 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           inference: '✨',
           webSearch: '🔎',
           fetchURLs: '🌐',
+          readEmail: '📧',
+          sendEmail: '✉️',
         };
         const displaySym = symbols[task.tool_or_prompt.name] || '⚙️';
         this.logger.info(`${displaySym} Executing sub-task ${task.id} ${task.description.slice(0, 50)}...`);

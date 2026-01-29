@@ -1,0 +1,31 @@
+use prd skill to create a PRD to implement  OpenAPI-based Swagger documentation and client SDKs for Python and JS/TS using spec.yaml
+
+Clarification needed: I need to ask a few clarifying questions to ensure the PRD meets your exact needs. Please answer using the lettered options:
+
+1. What is the primary goal of implementing this documentation and SDK feature?
+   A. Increase developer adoption and ease of integration for external partners.
+   B. Improve internal engineering efficiency by providing automated client libraries.
+   C. Ensure compliance and consistency across API versions.
+   D. Other: [please specify]
+
+2. Where should the generated Swagger documentation (UI) be hosted?
+   A. Integrated directly into the existing application's UI route (e.g., /docs).
+   B. Hosted as a standalone, static site (e.g., on S3/Netlify).
+   C. Generated but not hosted yet (deliver the static files).
+   D. Hidden behind an authentication wall.
+
+3. What is the desired level of automation for SDK generation?
+   A. Manual generation only (Developer runs a script when spec.yaml changes).
+   B. Automated generation in CI/CD (SDKs are rebuilt and published on every spec change).
+   C. Use a public service (e.g., OpenAPI Generator Online) for initial setup.
+   D. Only generate the Python SDK first; JS/TS is a fast-follow.
+
+4. What is the scope for the Python and JS/TS SDKs?
+   A. Minimal viable client: Focus on authentication and basic CRUD operations only.
+   B. Full feature parity: Include all operations defined in spec.yaml, robust error handling, and type safety.
+   C. Just the core API calls; exclude any utility functions or extensive documentation within the SDK itself.
+   D. Python SDK must be pip-installable; JS/TS must be NPM-publishable.
+
+Answers to clarifications are:
+1B, 2A, 3A 4D
+

@@ -14,6 +14,7 @@ async function main() {
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'openai/gpt-4o',
     logLevel: 'warn',
+    databasePath: process.env.DATABASE_PATH
   });
 
 

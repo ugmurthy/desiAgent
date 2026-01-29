@@ -142,7 +142,7 @@ export class ReadEmailTool extends BaseTool<any, ReadEmailOutput> {
 
         const recentMessages = messages.slice(-input.maxResults).reverse();
         ctx.logger.info(`Found ${messages.length} emails, fetching ${recentMessages.length}`);
-
+        ctx.logger.info(`snippets : ${input.snippets}, remove_urls: ${input.remove_urls}`)
         for (const uid of recentMessages) {
           const message = await client.fetchOne(
             uid,

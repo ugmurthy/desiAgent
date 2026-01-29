@@ -15,6 +15,7 @@ import { GlobTool } from './glob.js';
 import { GrepTool } from './grep.js';
 import { EditTool } from './edit.js';
 import { SendEmailTool } from './sendEmail.js';
+import { ReadEmailTool } from './readEmail.js';
 import { SendWebhookTool } from './sendWebhook.js';
 import { getLogger } from '../../util/logger.js';
 import type { ToolContext } from './base.js';
@@ -45,8 +46,9 @@ export class ToolRegistry {
     this.register(new GrepTool());
     this.register(new EditTool());
     this.register(new SendEmailTool());
+    this.register(new ReadEmailTool());
     this.register(new SendWebhookTool());
-    this.logger.info('Registered 11 default tools');
+    this.logger.info('Registered 12 default tools');
   }
 
   /**

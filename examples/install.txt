@@ -1,0 +1,7 @@
+Create a bash script to Check the current folder has no files, exit if there are files with a message "Requires a empty project folder"
+install bun on a linux or mac if absent and add the module @ugm/desiagent.  
+copy .env.example file from https://github.com/ugmurthy/desiAgent to current folder
+copy examples folder and its content from https://github.com/ugmurthy/desiAgent
+exit with message "use .env.example to create .env with your own keys and preferences"
+write the final script to install.sh
+

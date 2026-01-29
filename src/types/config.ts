@@ -8,7 +8,7 @@ export type LLMProvider = 'openai' | 'openrouter' | 'ollama';
 /**
  * Logging levels
  */
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
 
 /**
  * Zod schema for validating configuration
@@ -37,7 +37,7 @@ export const DesiAgentConfigSchema = z.object({
   }),
 
   // Logging
-  logLevel: z.enum(['debug', 'info', 'warn', 'error']).optional().default('info'),
+  logLevel: z.enum(['debug', 'info', 'warn', 'error', 'silent']).optional().default('info'),
 
   // Lifecycle callbacks
   onExecutionStart: z.function().optional(),

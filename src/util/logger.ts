@@ -52,12 +52,59 @@ function createConsoleTransport() {
 /**
  * Initialize the global logger with the specified level
  */
-export function initializeLogger(level: LogLevel = 'info'): Logger {
+// export function initializeLogger(level: LogLevel = 'info'): Logger {
+//   const logDest = getLogDest();
+//   const logDir = getLogDir();
+
+//   const options: LoggerOptions = { level };
+
+//   if (logDest === 'console') {
+//     options.transport = createConsoleTransport();
+//   } else if (logDest === 'file') {
+//     ensureLogDir(logDir);
+//     options.transport = createFileTransport(logDir);
+//   } else if (logDest === 'both') {
+//     ensureLogDir(logDir);
+//     options.transport = {
+//       targets: [
+//         createConsoleTransport(),
+//         createFileTransport(logDir),
+//       ],
+//     };
+//   }
+
+//   logger = pino(options);
+//   return logger;
+// }
+
+/**
+ * Get the global logger instance
+ */
+// export function getLogger(): Logger {
+//   if (!logger) {
+//     logger = initializeLogger('info');
+//   }
+//   return logger;
+// }
+/**
+ * Initialize the global logger with the specified level
+ * Priority: explicit level > LOG_LEVEL env var > 'silent' (default)
+ */
+export function initializeLogger(level?: LogLevel): Logger {
+  const effectiveLevel: string = level 
+    ?? process.env.LOG_LEVEL?.toLowerCase() 
+    ?? 'silent';
+
+  // Validate if needed (optional, Pino will ignore invalid levels gracefully)
+  const validLevels = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'];
+  const levelToUse = validLevels.includes(effectiveLevel) ? effectiveLevel : 'silent';
+
   const logDest = getLogDest();
   const logDir = getLogDir();
 
-  const options: LoggerOptions = { level };
+  const options: LoggerOptions = { level: levelToUse };
 
+  // Still configure transports based on LOG_DEST, but they will be inactive when level is 'silent'
   if (logDest === 'console') {
     options.transport = createConsoleTransport();
   } else if (logDest === 'file') {
@@ -82,11 +129,11 @@ export function initializeLogger(level: LogLevel = 'info'): Logger {
  */
 export function getLogger(): Logger {
   if (!logger) {
-    logger = initializeLogger('info');
+    // Auto-initialize with no explicit level → uses env or defaults to silent
+    logger = initializeLogger();
   }
   return logger;
 }
-
 /**
  * Convenience function for logging
  */
@@ -95,6 +142,7 @@ export const log = {
   info: (msg: string, data?: any) => getLogger().info(data, msg),
   warn: (msg: string, data?: any) => getLogger().warn(data, msg),
   error: (msg: string, data?: any) => getLogger().error(data, msg),
+ 
 };
 
 export default getLogger;

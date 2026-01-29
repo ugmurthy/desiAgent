@@ -18,6 +18,7 @@ async function main() {
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'google/gemini-2.5-flash-lite-preview-09-2025',
     logLevel: 'info',
+    databasePath: process.env.DATABASE_PATH
   });
 
   try {
@@ -139,7 +140,8 @@ async function main() {
 
 50. **Finalize and Output Report:** Compile the comprehensive report where combined answers to research questions provide a full q-commerce overview, with recommendations solving the entry/optimization problem. End with next steps for implementation.
 
-51. Send the Finalised report to ugmurthy@gmail.com
+51. Write the Finalised report to qc-operations.md 
+52. email the report to ugmurthy@gmail.com
  
     `
     const createResult = await client.dags.createFromGoal({

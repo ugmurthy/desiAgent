@@ -8,7 +8,9 @@
 
 import { setupDesiAgent } from '../src/index.js';
 import { parseArgs } from 'util';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -18,24 +20,41 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf-8').trim();
 }
 
+function getSkillContent(skillName: string): string {
+  const skillPath = join(homedir(), '.config', 'amp', 'skills', skillName, 'SKILL.md');
+  if (!existsSync(skillPath)) {
+    console.error(`Skill not found: ${skillPath}`);
+    process.exit(1);
+  }
+  return readFileSync(skillPath, 'utf-8').trim();
+}
+
 async function getGoal(): Promise<string> {
   const { values } = parseArgs({
     args: process.argv.slice(2),
     options: {
       f: { type: 'string' },
+      skill: { type: 'string' },
     },
   });
 
+  let goal: string;
+
   if (values.f) {
-    return readFileSync(values.f, 'utf-8').trim();
+    goal = readFileSync(values.f, 'utf-8').trim();
+  } else if (!process.stdin.isTTY) {
+    goal = await readStdin();
+  } else {
+    console.log('No goal provided. Use -f <filename> or pipe input via stdin.');
+    process.exit(1);
   }
 
-  if (!process.stdin.isTTY) {
-    return readStdin();
+  if (values.skill) {
+    const skillContent = getSkillContent(values.skill);
+    goal = skillContent + '\n' + goal;
   }
 
-  console.log('No goal provided. Use -f <filename> or pipe input via stdin.');
-  process.exit(1);
+  return goal;
 }
 
 async function main() {
@@ -46,7 +65,8 @@ async function main() {
     llmProvider: 'openrouter',
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'google/gemini-2.5-flash-lite-preview-09-2025',
-    logLevel: 'info',
+    databasePath:process.env.DATABASE_PATH,
+    logLevel: process.env.LOG_LEVEL
   });
 
   try {
@@ -81,18 +101,19 @@ async function main() {
     // Wait for execution to complete
     for await (const event of client.executions.streamEvents(execution.id)) {
       console.log('Event:', event.type, event.data);
+      if (event.type === 'execution_completed') {
+
+
+      }
     }
 
     // Get execution details with substeps
     const executionDetails = await client.executions.getWithSubSteps(execution.id);
-    console.log('\nExecution Details:');
-    console.log('  Status:', executionDetails.status);
-    console.log('  SubSteps count:', executionDetails.subSteps?.length ?? 0);
-
+    console.log(`final result: \n ${executionDetails.finalResult}\n`)
     if (executionDetails.subSteps && executionDetails.subSteps.length > 0) {
       console.log('\nSubSteps:');
       for (const step of executionDetails.subSteps) {
-        console.log(`  - Task ${step.taskId}: ${step.status}`);
+        console.log(`- Task ${step.taskId}: ${step.toolOrPromptName} ${step.status}, ${parseFloat(step.durationMs/1000).toFixed(2)}s}`);
       }
     }
 

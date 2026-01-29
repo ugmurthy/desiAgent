@@ -19,18 +19,19 @@ async function main() {
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'openai/gpt-4o',
     logLevel: 'warn',
+    databasePath: process.env.DATABASE_PATH
   });
 
 
   try {
-    const executionId= "exec_luOPXarefgapZ_FBFwfTD";
+    const executionId= "exec_9YZrrBjGceEkIU076jaeD";
     
     const costs = client.costs
 
     const execCosts = await costs.getExecutionCosts(executionId);
     console.log(`Execution id : ${executionId} : ${JSON.stringify(execCosts,null,2)}`)
     
-    const dagId = "dag__nkhJVnWlwD29WxR2eMRZ";
+    const dagId = "dag_t8i_UQCULekxxx26mIHLF";
     const dagCosts = await costs.getDagCosts(dagId);
     console.log(`Dag id : ${dagId} : ${JSON.stringify(dagCosts,null,2)}`)   
     

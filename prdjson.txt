@@ -1,0 +1,2 @@
+Read ~/.desiAgent/tenants/02ad6d7b-27d4-415d-a598-b93b683fbc82/artifacts/tasks/prd-openapi-sdk-generation.md and convert it to prd.json using ralph skill.
+

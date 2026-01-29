@@ -32,8 +32,7 @@ async function main() {
       sender: 'james@jamesclear.com',
       maxResults: 1,
       unreadOnly: true,
-      snippets: false,    // false = include body, true = include snippet
-      remove_urls: true,  // strip URLs from body (only when snippets is false)
+      
     },
     ctx
   );
