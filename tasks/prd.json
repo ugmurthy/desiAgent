@@ -1,95 +1,84 @@
 {
   "project": "desiAgent",
-  "branchName": "ralph/init-db-service",
-  "description": "initDB Service - Programmatically create SQLite databases with the current schema",
+  "branchName": "ralph/createfromgoal-persist-all",
+  "description": "createFromGoal() Unified Persistence & Response Refactor - Persist all DAG creation attempts to database regardless of outcome",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Create initDB service file with types",
-      "description": "As a developer, I need a new service module to house the database initialization logic with proper type definitions.",
+      "title": "Persist clarification-needed DAGs",
+      "description": "As a system operator, I want clarification-needed DAGs persisted so that I can track incomplete planning attempts and resume them later.",
       "acceptanceCriteria": [
-        "Create src/services/initDB.ts",
-        "Export async function initDB(dbPath: string, options?: InitDBOptions): Promise<InitDBResult>",
-        "Define InitDBOptions type with force?: boolean",
-        "Define InitDBResult type with { success: boolean; message: string; tables?: string[] }",
+        "When clarification_needed is true, insert DAG record with status 'pending'",
+        "Store the DecomposerJob result in the result field (JSON stringified)",
+        "Include dagTitle from TitleMaster if available",
+        "Return { status: 'clarification_required', dagId: string, clarificationQuery: string }",
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "US-002",
-      "title": "Validate database path",
-      "description": "As a developer, I want the service to validate the database path before attempting creation.",
+      "title": "Persist validation-failed DAGs",
+      "description": "As a developer, I want failed DAG validations persisted so that I can debug why certain goals produce invalid structures.",
       "acceptanceCriteria": [
-        "Return error result if dbPath is empty or undefined",
-        "Return error result if parent directory does not exist",
-        "Return error result if database file exists and force is not set",
+        "When DAG validation fails after max attempts, insert DAG record with status 'validation_error'",
+        "Store the raw failed response string in the result field (not JSON parsed)",
+        "Do NOT throw ValidationError - return response instead",
+        "Return { status: 'validation_error', dagId: string }",
+        "Include all planning attempts and usage tracking in the persisted record",
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "US-003",
-      "title": "Handle force option for existing databases",
-      "description": "As a developer, I want to optionally force-overwrite an existing database.",
+      "title": "Unify return type for all outcomes",
+      "description": "As an API consumer, I want all createFromGoal outcomes to return a dagId so I can track and reference the planning attempt.",
       "acceptanceCriteria": [
-        "When force: true and file exists, delete the existing database file",
-        "Also delete associated -wal and -shm files if they exist",
-        "Proceed with database creation after deletion",
+        "Update DAGPlanningResult type to always include dagId: string",
+        "Success case: { status: 'success', dagId: string }",
+        "Clarification case: { status: 'clarification_required', dagId: string, clarificationQuery: string }",
+        "Validation error case: { status: 'validation_error', dagId: string }",
+        "Remove UnpersistedResult type (no longer needed)",
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "US-004",
-      "title": "Generate SQL from schema",
-      "description": "As a developer, I want the service to generate CREATE TABLE/INDEX/VIEW SQL from the schema.",
+      "title": "Update createAndExecuteFromGoal() caller",
+      "description": "As a developer, I want createAndExecuteFromGoal to handle the new unified response format.",
       "acceptanceCriteria": [
-        "Reuse SQL generation logic from scripts/create-db.ts",
-        "Generate CREATE TABLE statements for agents, dags, dag_executions, dag_sub_steps",
-        "Generate CREATE INDEX statements from schema indexes",
-        "Generate CREATE VIEW statement for executions view",
+        "Update to check status field instead of type narrowing",
+        "Handle 'validation_error' status appropriately (throw or return error)",
+        "Handle 'clarification_required' status (throw as before)",
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "US-005",
-      "title": "Create database with pragmas and execute schema",
-      "description": "As a developer, I want the database created with optimal settings and all tables.",
+      "title": "Resume clarification via dagId",
+      "description": "As a user, I want to resume a clarification-required DAG by providing my response so that I don't have to restart planning from scratch.",
       "acceptanceCriteria": [
-        "Create new SQLite database at dbPath using bun:sqlite",
-        "Execute PRAGMA journal_mode = WAL",
-        "Execute PRAGMA foreign_keys = ON",
-        "Execute all generated CREATE TABLE, INDEX, and VIEW statements",
-        "Close database connection after creation",
+        "Add resumeFromClarification(dagId: string, userResponse: string) method to DAGsService",
+        "Fetch existing DAG record by dagId, validate status is 'pending'",
+        "Append user response to original goal text and re-run planning",
+        "Reuse existing createFromGoal logic (DRY)",
+        "On success, update the existing DAG record (don't create new one)",
+        "Return same unified response format",
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": true,
-      "notes": ""
-    },
-    {
-      "id": "US-006",
-      "title": "Return appropriate success or error responses",
-      "description": "As a developer, I want clear success/error responses from the service.",
-      "acceptanceCriteria": [
-        "On success return { success: true, message: 'Database created successfully', tables: [...] }",
-        "tables array includes all table names: agents, dags, dag_executions, dag_sub_steps",
-        "On any error return { success: false, message: '<descriptive error>' }",
-        "Never throw exceptions; always return error result",
-        "Typecheck passes"
-      ],
-      "priority": 6,
-      "passes": true,
+      "passes": false,
       "notes": ""
     }
   ]

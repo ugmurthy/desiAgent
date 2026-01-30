@@ -1,0 +1,42 @@
+load prd skill to create a PRD for the following refactor of createFromGoal() service in @src/core/execution/dags.ts to do the following:
+- on ValidationError of dag - insert the data as in baseInsertData and title to db with the exception that dag.result will set to {} - check if schema allows this else make changes to that too
+- on clarification_needed - insert the data as in baseInsertData and title to db
+- in all cases the return response with be similar to success case with the right value for success
+
+
+Clarifying Questions for createFromGoal() Refactor PRD
+
+What status value should be stored for failed DAGs?
+A. 'validation_error' (new status)
+B. 'failed' (generic failure)
+C. 'error' (matches other error patterns)
+D. Other: [please specify]
+What status value should be stored for clarification-needed DAGs?
+A. 'clarification_required' (matches current return status)
+B. 'pending' (awaiting user input)
+C. 'draft' (incomplete)
+D. Other: [please specify]
+For the unified return response, should all cases return dagId?
+A. Yes - always return { status: string, dagId: string } with appropriate status
+B. Yes - return { status: string, dagId: string, clarificationQuery?: string } for clarification case
+C. Return current success format but include success: boolean field
+D. Other: [please specify]
+Should the schema be updated to allow result to be null/empty object?
+A. Allow empty object {} only (keep non-nullable)
+B. Make result field optional/nullable in schema
+C. Use a sentinel value like { error: true, message: "..." }
+D. Other: [please specify]
+Should validation errors thrown mid-loop (parse error, validation after max attempts) also persist?
+A. Yes - persist all failures including parse errors
+B. Only persist when DAG structure is parseable but validation fails
+C. Only persist the final ValidationError after max attempts
+D. No - only persist clarification and success cases
+1A, 2B, 3B, 4D (Considering result is of type TEXT update it with the string that failed validation)
+ 5. No. Do not throw error - just return response.
+
+ Answers to open questions:
+-  do not add an index on 'status'
+- yes clarification responses be resumable via new endpoint that takes dagId + user response
+
+while refactoring ensure code is DRY
+

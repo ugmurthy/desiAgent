@@ -1,0 +1,26 @@
+## Codebase Patterns
+- Use `bun:sqlite` Database class for SQLite operations
+- Schema tables are in `src/db/schema.js` and exported as: agents, dags, dagExecutions, dagSubSteps
+- Use `getTableConfig` from drizzle-orm/sqlite-core to introspect table definitions
+- SQL generation functions use internal ColumnConfig/IndexConfig interfaces to cast drizzle types
+
+---
+
+## 2026-01-24 - US-001 through US-006
+Thread: https://ampcode.com/threads/T-019bf008-4c22-7459-915d-6cab3a1d9e75
+- Implemented complete initDB service with all features in one iteration
+- Files changed: src/services/initDB.ts (new)
+- **Features implemented:**
+  - US-001: Service file with InitDBOptions and InitDBResult types
+  - US-002: Path validation (empty check, parent dir check, exists check)
+  - US-003: Force option handling (delete db, wal, shm files)
+  - US-004: SQL generation from schema (tables, indexes, view)
+  - US-005: Database creation with WAL and foreign_keys pragmas
+  - US-006: Success/error response handling (never throws)
+- **Learnings for future iterations:**
+  - Created new `src/services/` directory for services
+  - Reused SQL generation logic from scripts/create-db.ts with better typing
+  - The service is async but uses sync bun:sqlite operations (Database class is sync)
+  - generateAllSQL now returns both sql and tableNames for the response
+
+---
