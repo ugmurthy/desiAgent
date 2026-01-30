@@ -31,3 +31,24 @@ Thread: https://ampcode.com/threads/T-019c0d37-9427-770a-9086-c6f788c331ee
   - Both now persist with status='validation_error' and return { status, dagId } instead of throwing
   - Raw response stored in result.rawResponse for debugging
 ---
+
+## 2026-01-30 - US-003
+Thread: https://ampcode.com/threads/T-019c0d37-9427-770a-9086-c6f788c331ee
+- Unified return type - all outcomes now return dagId
+- Removed UnpersistedResult type entirely
+- Files changed:
+  - src/core/execution/dags.ts: Removed UnpersistedResult, updated low-coverage path to persist, updated runExperiments
+  - src/types/client.ts: Removed UnpersistedResult, updated createAndExecuteFromGoal signature
+  - src/index.ts: Removed UnpersistedResult export
+- **Learnings for future iterations:**
+  - DAGPlanningResult is now `ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult`
+  - All three variants have `dagId: string` - callers can always access dagId
+  - Low-coverage DAGs (validation.coverage !== 'high') are now persisted with status='success'
+  - createAndExecuteFromGoal now returns `{ dagId: string; executionId: string }` (dagId no longer optional)
+---
+
+## 2026-01-30 - US-004
+Thread: https://ampcode.com/threads/T-019c0d37-9427-770a-9086-c6f788c331ee
+- Completed as part of US-003
+- createAndExecuteFromGoal now checks status field and handles validation_error and clarification_required appropriately
+---

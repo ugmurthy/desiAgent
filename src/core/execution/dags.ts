@@ -691,6 +691,71 @@ export class DAGsService {
     };
   }
 
+  async resumeFromClarification(dagId: string, userResponse: string): Promise<DAGPlanningResult> {
+    const [existingDag] = await this.db.select().from(dags).where(eq(dags.id, dagId)).limit(1);
+
+    if (!existingDag) {
+      throw new NotFoundError('DAG', dagId);
+    }
+
+    if (existingDag.status !== 'pending') {
+      throw new ValidationError(
+        `Cannot resume DAG with status '${existingDag.status}'. Only 'pending' DAGs can be resumed.`,
+        'status',
+        existingDag.status
+      );
+    }
+
+    const params = existingDag.params as Record<string, any>;
+    const originalGoalText = params?.goalText || '';
+    const augmentedGoalText = `${originalGoalText}\n\nUser clarification: ${userResponse}`;
+
+    this.logger.info({ dagId, originalGoalText: truncateForLog(originalGoalText) }, 'Resuming clarification DAG');
+
+    const planningResult = await this.createFromGoal({
+      goalText: augmentedGoalText,
+      agentName: params?.agentName || existingDag.agentName || 'Decomposer',
+      provider: params?.provider,
+      model: params?.model,
+      temperature: params?.temperature ?? 0.7,
+      maxTokens: params?.max_tokens ?? 10000,
+      seed: params?.seed,
+      cronSchedule: existingDag.cronSchedule || undefined,
+      scheduleActive: existingDag.scheduleActive ?? false,
+      timezone: existingDag.timezone || 'UTC',
+    });
+
+    if (planningResult.status === 'success') {
+      const newDagRecord = await this.db.select().from(dags).where(eq(dags.id, planningResult.dagId)).limit(1);
+      
+      if (newDagRecord.length > 0) {
+        const now = new Date();
+        await this.db.update(dags).set({
+          status: 'success',
+          result: newDagRecord[0].result,
+          usage: newDagRecord[0].usage,
+          generationStats: newDagRecord[0].generationStats,
+          attempts: (existingDag.attempts || 0) + (newDagRecord[0].attempts || 1),
+          dagTitle: newDagRecord[0].dagTitle || existingDag.dagTitle,
+          planningTotalUsage: newDagRecord[0].planningTotalUsage,
+          planningTotalCostUsd: newDagRecord[0].planningTotalCostUsd,
+          planningAttempts: [
+            ...(existingDag.planningAttempts as any[] || []),
+            ...(newDagRecord[0].planningAttempts as any[] || []),
+          ],
+          updatedAt: now,
+        }).where(eq(dags.id, dagId));
+
+        await this.db.delete(dags).where(eq(dags.id, planningResult.dagId));
+
+        this.logger.info({ dagId, newDagId: planningResult.dagId }, 'Merged resumed DAG into original');
+        return { status: 'success', dagId };
+      }
+    }
+
+    return planningResult;
+  }
+
   async execute(dagId: string, _options?: ExecuteOptions): Promise<{ id: string; status: string }> {
     const [dagRecord] = await this.db.select().from(dags).where(eq(dags.id, dagId)).limit(1);
 

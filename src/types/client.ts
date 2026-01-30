@@ -89,6 +89,7 @@ export interface RunExperimentsInput {
 export interface DAGsService {
   createFromGoal(options: CreateDAGFromGoalOptions): Promise<DAGPlanningResult>;
   createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<{ dagId: string; executionId: string }>;
+  resumeFromClarification(dagId: string, userResponse: string): Promise<DAGPlanningResult>;
   execute(dagId: string, options?: { provider?: string; model?: string }): Promise<{ id: string; status: string }>;
   executeDefinition(options: { definition: any; originalGoalText: string }): Promise<{ id: string; status: string }>;
   resume(executionId: string): Promise<{ id: string; status: string; retryCount: number }>;
