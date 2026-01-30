@@ -98,6 +98,11 @@ export interface DAGCreatedResult {
   dagId: string;
 }
 
+export interface ValidationErrorResult {
+  status: 'validation_error';
+  dagId: string;
+}
+
 export interface UnpersistedResult {
   status: 'success';
   result: DecomposerJob;
@@ -106,7 +111,7 @@ export interface UnpersistedResult {
   attempts: number;
 }
 
-export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | UnpersistedResult;
+export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult | UnpersistedResult;
 
 export interface ExecuteOptions {
   provider?: 'openai' | 'openrouter' | 'ollama';
@@ -284,11 +289,48 @@ export class DAGsService {
         this.logger.error({ err: parseError, attempt, responsePreview: response.content.slice(0, 80) }, 'Failed to parse LLM response as JSON');
 
         if (attempt >= maxAttempts) {
-          throw new ValidationError(
-            `LLM response is not valid JSON after ${attempt} attempts`,
-            'response',
-            response.content.slice(0, 500)
-          );
+          const dagId = generateDAGId();
+          const now = new Date();
+          this.logger.info({ dagId }, 'DagID Generated for parse error');
+
+          const insertData = {
+            id: dagId,
+            status: 'validation_error' as const,
+            result: { rawResponse: response.content } as any,
+            usage: attemptUsage as any,
+            generationStats: attemptGenStats,
+            attempts: attempt,
+            agentName,
+            dagTitle: null,
+            cronSchedule: cronSchedule || null,
+            scheduleActive,
+            timezone,
+            params: {
+              goalText,
+              agentName,
+              provider,
+              model,
+              temperature,
+              max_tokens: maxTokens,
+              seed,
+            },
+            planningTotalUsage: planningUsageTotal,
+            planningTotalCostUsd: planningCostTotal.toString(),
+            planningAttempts,
+            createdAt: now,
+            updatedAt: now,
+          };
+
+          try {
+            await this.db.insert(dags).values(insertData);
+          } catch (dbError) {
+            const dbErrorMessage = dbError instanceof Error ? dbError.message : String(dbError);
+            this.logger.error({ err: dbError, dagId }, 'Failed to insert validation_error DAG');
+            throw new Error(`Database insert failed for validation_error DAG ${dagId}: ${dbErrorMessage}`);
+          }
+
+          this.logger.info({ dagId, agentName, error: errorMessage }, 'Validation error DAG saved (parse error)');
+          return { status: 'validation_error', dagId };
         }
         retryReason = 'retry_parse_error';
         continue;
@@ -311,11 +353,48 @@ export class DAGsService {
         this.logger.error({ errors: validatedResult.error.issues, attempt }, 'DAG validation failed');
 
         if (attempt >= maxAttempts) {
-          throw new ValidationError(
-            `Invalid DAG structure after ${attempt} attempts`,
-            'result',
-            JSON.stringify(validatedResult.error.issues)
-          );
+          const dagId = generateDAGId();
+          const now = new Date();
+          this.logger.info({ dagId }, 'DagID Generated for schema validation error');
+
+          const insertData = {
+            id: dagId,
+            status: 'validation_error' as const,
+            result: { rawResponse: response.content, validationErrors: validatedResult.error.issues } as any,
+            usage: attemptUsage as any,
+            generationStats: attemptGenStats,
+            attempts: attempt,
+            agentName,
+            dagTitle: null,
+            cronSchedule: cronSchedule || null,
+            scheduleActive,
+            timezone,
+            params: {
+              goalText,
+              agentName,
+              provider,
+              model,
+              temperature,
+              max_tokens: maxTokens,
+              seed,
+            },
+            planningTotalUsage: planningUsageTotal,
+            planningTotalCostUsd: planningCostTotal.toString(),
+            planningAttempts,
+            createdAt: now,
+            updatedAt: now,
+          };
+
+          try {
+            await this.db.insert(dags).values(insertData);
+          } catch (dbError) {
+            const dbErrorMessage = dbError instanceof Error ? dbError.message : String(dbError);
+            this.logger.error({ err: dbError, dagId }, 'Failed to insert validation_error DAG');
+            throw new Error(`Database insert failed for validation_error DAG ${dagId}: ${dbErrorMessage}`);
+          }
+
+          this.logger.info({ dagId, agentName, errors: validatedResult.error.issues }, 'Validation error DAG saved (schema error)');
+          return { status: 'validation_error', dagId };
         }
         retryReason = 'retry_validation';
         continue;

@@ -53,6 +53,11 @@ export interface DAGCreatedResult {
   dagId: string;
 }
 
+export interface ValidationErrorResult {
+  status: 'validation_error';
+  dagId: string;
+}
+
 export interface UnpersistedResult {
   status: 'success';
   result: any;
@@ -61,7 +66,7 @@ export interface UnpersistedResult {
   attempts: number;
 }
 
-export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | UnpersistedResult;
+export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult | UnpersistedResult;
 
 /**
  * Scheduled DAG info

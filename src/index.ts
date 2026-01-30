@@ -241,6 +241,7 @@ export type {
   DAGPlanningResult,
   ClarificationRequiredResult,
   DAGCreatedResult,
+  ValidationErrorResult,
   UnpersistedResult,
   ExecuteOptions,
   ExecuteDefinitionOptions,
