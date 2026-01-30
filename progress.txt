@@ -2,6 +2,8 @@
 - The `result` column in `dags` table is `TEXT` with `mode: 'json'` - store objects directly (not JSON.stringify'd strings)
 - Use `as any` for result/usage in insert data to satisfy drizzle types
 - TitleMaster async generation pattern: `generateTitleAsync(activeLLMProvider, goalText)` returns title with usage stats
+- For validation errors, store raw response in `{ rawResponse: string, validationErrors?: ZodIssue[] }`
+- ValidationErrorResult type added: `{ status: 'validation_error', dagId: string }`
 
 ---
 
@@ -15,4 +17,17 @@ Thread: https://ampcode.com/threads/T-019c0d37-9427-770a-9086-c6f788c331ee
   - ClarificationRequiredResult now only has { status, dagId, clarificationQuery }
   - Removed result, usage, generationStats from ClarificationRequiredResult - use dagId to fetch if needed
   - Clarification DAGs are stored with status='pending' and can be queried for debugging
+---
+
+## 2026-01-30 - US-002
+Thread: https://ampcode.com/threads/T-019c0d37-9427-770a-9086-c6f788c331ee
+- Implemented persistence for validation-failed DAGs with status 'validation_error'
+- Files changed:
+  - src/core/execution/dags.ts: Added ValidationErrorResult type, replaced two throw statements with DB persistence
+  - src/types/client.ts: Added ValidationErrorResult type
+  - src/index.ts: Exported ValidationErrorResult type
+- **Learnings for future iterations:**
+  - Two error paths: parse error (extractCodeBlock fails) and schema validation error (DecomposerJobSchema.safeParse fails)
+  - Both now persist with status='validation_error' and return { status, dagId } instead of throwing
+  - Raw response stored in result.rawResponse for debugging
 ---

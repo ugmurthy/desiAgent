@@ -58,15 +58,7 @@ export interface ValidationErrorResult {
   dagId: string;
 }
 
-export interface UnpersistedResult {
-  status: 'success';
-  result: any;
-  usage?: { promptTokens: number; completionTokens: number; totalTokens: number } | null;
-  generationStats?: Record<string, any> | null;
-  attempts: number;
-}
-
-export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult | UnpersistedResult;
+export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult;
 
 /**
  * Scheduled DAG info
@@ -96,7 +88,7 @@ export interface RunExperimentsInput {
  */
 export interface DAGsService {
   createFromGoal(options: CreateDAGFromGoalOptions): Promise<DAGPlanningResult>;
-  createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<{ dagId?: string; executionId: string }>;
+  createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<{ dagId: string; executionId: string }>;
   execute(dagId: string, options?: { provider?: string; model?: string }): Promise<{ id: string; status: string }>;
   executeDefinition(options: { definition: any; originalGoalText: string }): Promise<{ id: string; status: string }>;
   resume(executionId: string): Promise<{ id: string; status: string; retryCount: number }>;

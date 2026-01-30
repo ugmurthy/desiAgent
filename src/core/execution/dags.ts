@@ -103,15 +103,7 @@ export interface ValidationErrorResult {
   dagId: string;
 }
 
-export interface UnpersistedResult {
-  status: 'success';
-  result: DecomposerJob;
-  usage?: { promptTokens: number; completionTokens: number; totalTokens: number } | null;
-  generationStats?: Record<string, any> | null;
-  attempts: number;
-}
-
-export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult | UnpersistedResult;
+export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult;
 
 export interface ExecuteOptions {
   provider?: 'openai' | 'openrouter' | 'ollama';
@@ -596,19 +588,84 @@ export class DAGsService {
         continue;
       }
 
-      return {
-        status: 'success',
-        result: dag,
-        usage,
-        generationStats,
+      dag = renumberSubTasks(dag);
+      dag.original_request = goalText;
+      const dagId = generateDAGId();
+      const now = new Date();
+      this.logger.info({ dagId }, 'DagID Generated for low-coverage DAG');
+
+      const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText);
+
+      const baseInsertData = {
+        id: dagId,
+        status: 'success' as const,
+        result: dag as any,
+        usage: usage as any,
+        generationStats: generationStats,
         attempts: attempt,
+        agentName,
+        dagTitle: null as string | null,
+        cronSchedule: cronSchedule || null,
+        scheduleActive,
+        timezone,
+        params: {
+          goalText,
+          agentName,
+          provider,
+          model,
+          temperature,
+          max_tokens: maxTokens,
+          seed,
+        },
+        planningTotalUsage: planningUsageTotal,
+        planningTotalCostUsd: planningCostTotal.toString(),
+        planningAttempts,
+        createdAt: now,
+        updatedAt: now,
       };
+
+      const titleResult = await titleMasterPromise;
+      if (titleResult) {
+        this.logger.info('TitleMaster generated Result for low-coverage DAG');
+        baseInsertData.dagTitle = titleResult.title;
+
+        planningAttempts.push({
+          attempt,
+          reason: 'title_master',
+          usage: titleResult.usage,
+          costUsd: titleResult.costUsd,
+          generationStats: titleResult.generationStats,
+        });
+
+        if (titleResult.usage) {
+          planningUsageTotal.promptTokens += titleResult.usage.promptTokens ?? 0;
+          planningUsageTotal.completionTokens += titleResult.usage.completionTokens ?? 0;
+          planningUsageTotal.totalTokens += titleResult.usage.totalTokens ?? 0;
+        }
+        if (titleResult.costUsd != null) {
+          planningCostTotal += titleResult.costUsd;
+        }
+
+        baseInsertData.planningTotalUsage = planningUsageTotal;
+        baseInsertData.planningTotalCostUsd = planningCostTotal.toString();
+      }
+
+      try {
+        await this.db.insert(dags).values(baseInsertData);
+      } catch (dbError) {
+        const errorMessage = dbError instanceof Error ? dbError.message : String(dbError);
+        this.logger.error({ err: dbError, dagId }, 'Failed to insert low-coverage DAG');
+        throw new Error(`Database insert failed for low-coverage DAG ${dagId}: ${errorMessage}`);
+      }
+
+      this.logger.info({ dagId, agentName }, 'Low-coverage DAG saved to database');
+      return { status: 'success', dagId };
     }
 
     throw new ValidationError(`Failed to create DAG after ${maxAttempts} attempts`, 'attempts', maxAttempts);
   }
 
-  async createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<{ dagId?: string; executionId: string }> {
+  async createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<{ dagId: string; executionId: string }> {
     const planningResult = await this.createFromGoal(options);
 
     if (planningResult.status === 'clarification_required') {
@@ -619,21 +676,19 @@ export class DAGsService {
       );
     }
 
-    if (planningResult.status === 'success' && 'dagId' in planningResult) {
-      const executionResult = await this.execute(planningResult.dagId);
-      return {
-        dagId: planningResult.dagId,
-        executionId: executionResult.id,
-      };
+    if (planningResult.status === 'validation_error') {
+      throw new ValidationError(
+        `Validation failed for DAG ${planningResult.dagId}`,
+        'validation',
+        planningResult.dagId
+      );
     }
 
-    const result = (planningResult as UnpersistedResult).result;
-    const executionResult = await this.executeDefinition({
-      definition: result,
-      originalGoalText: options.goalText,
-    });
-
-    return { executionId: executionResult.id };
+    const executionResult = await this.execute(planningResult.dagId);
+    return {
+      dagId: planningResult.dagId,
+      executionId: executionResult.id,
+    };
   }
 
   async execute(dagId: string, _options?: ExecuteOptions): Promise<{ id: string; status: string }> {
@@ -1035,29 +1090,15 @@ export class DAGsService {
             seed,
           });
 
-          if (result.status === 'success' && 'dagId' in result) {
+          if (result.status === 'success') {
             dagId = result.dagId;
             success = true;
-          } else if (result.status === 'success' && 'result' in result) {
-            const persistedDagId = generateDAGId();
-            const unpersistedResult = result as UnpersistedResult;
-            const now = new Date();
-
-            await this.db.insert(dags).values({
-              id: persistedDagId,
-              status: 'success',
-              result: unpersistedResult.result as any,
-              usage: unpersistedResult.usage as any,
-              generationStats: unpersistedResult.generationStats,
-              attempts: unpersistedResult.attempts,
-              params: { goalText, agentName, provider, model, temperature, seed },
-              createdAt: now,
-              updatedAt: now,
-            });
-
-            dagId = persistedDagId;
-            success = true;
+          } else if (result.status === 'validation_error') {
+            dagId = result.dagId;
+            success = false;
+            error = 'Validation error';
           } else {
+            dagId = result.dagId;
             error = 'Clarification required';
           }
 

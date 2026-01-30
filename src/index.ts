@@ -242,7 +242,6 @@ export type {
   ClarificationRequiredResult,
   DAGCreatedResult,
   ValidationErrorResult,
-  UnpersistedResult,
   ExecuteOptions,
   ExecuteDefinitionOptions,
   RunExperimentsInput,
