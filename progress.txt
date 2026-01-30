@@ -52,3 +52,16 @@ Thread: https://ampcode.com/threads/T-019c0d37-9427-770a-9086-c6f788c331ee
 - Completed as part of US-003
 - createAndExecuteFromGoal now checks status field and handles validation_error and clarification_required appropriately
 ---
+
+## 2026-01-30 - US-005
+Thread: https://ampcode.com/threads/T-019c0d37-9427-770a-9086-c6f788c331ee
+- Added `resumeFromClarification(dagId, userResponse)` method to DAGsService
+- Files changed:
+  - src/core/execution/dags.ts: Added resumeFromClarification method
+  - src/types/client.ts: Added method to DAGsService interface
+- **Learnings for future iterations:**
+  - Method fetches existing pending DAG, augments goalText with user response, re-runs createFromGoal
+  - On success, merges new DAG into original (updates original, deletes temp)
+  - Drizzle update syntax: `.update(table).set({...}).where(...)` (set before where)
+  - Returns unified DAGPlanningResult - same format as createFromGoal
+---
