@@ -44,10 +44,8 @@ export interface CreateDAGFromGoalOptions {
  */
 export interface ClarificationRequiredResult {
   status: 'clarification_required';
+  dagId: string;
   clarificationQuery: string;
-  result: any;
-  usage?: { promptTokens: number; completionTokens: number; totalTokens: number } | null;
-  generationStats?: Record<string, any> | null;
 }
 
 export interface DAGCreatedResult {

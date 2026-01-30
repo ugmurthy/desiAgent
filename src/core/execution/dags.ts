@@ -89,10 +89,8 @@ interface PlanningUsageTotal {
 
 export interface ClarificationRequiredResult {
   status: 'clarification_required';
+  dagId: string;
   clarificationQuery: string;
-  result: DecomposerJob;
-  usage?: { promptTokens: number; completionTokens: number; totalTokens: number } | null;
-  generationStats?: Record<string, any> | null;
 }
 
 export interface DAGCreatedResult {
@@ -335,12 +333,81 @@ export class DAGsService {
 
       if (dag.clarification_needed) {
         this.logger.info({ clarificationQuery: dag.clarification_query }, 'Clarification required');
+        
+        const dagId = generateDAGId();
+        const now = new Date();
+        this.logger.info({ dagId }, 'DagID Generated for clarification');
+
+        const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText);
+
+        const baseInsertData = {
+          id: dagId,
+          status: 'pending' as const,
+          result: dag as any,
+          usage: usage as any,
+          generationStats: generationStats,
+          attempts: attempt,
+          agentName,
+          dagTitle: null as string | null,
+          cronSchedule: cronSchedule || null,
+          scheduleActive,
+          timezone,
+          params: {
+            goalText,
+            agentName,
+            provider,
+            model,
+            temperature,
+            max_tokens: maxTokens,
+            seed,
+          },
+          planningTotalUsage: planningUsageTotal,
+          planningTotalCostUsd: planningCostTotal.toString(),
+          planningAttempts,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        const titleResult = await titleMasterPromise;
+        if (titleResult) {
+          this.logger.info('TitleMaster generated Result for clarification');
+          baseInsertData.dagTitle = titleResult.title;
+
+          planningAttempts.push({
+            attempt,
+            reason: 'title_master',
+            usage: titleResult.usage,
+            costUsd: titleResult.costUsd,
+            generationStats: titleResult.generationStats,
+          });
+
+          if (titleResult.usage) {
+            planningUsageTotal.promptTokens += titleResult.usage.promptTokens ?? 0;
+            planningUsageTotal.completionTokens += titleResult.usage.completionTokens ?? 0;
+            planningUsageTotal.totalTokens += titleResult.usage.totalTokens ?? 0;
+          }
+          if (titleResult.costUsd != null) {
+            planningCostTotal += titleResult.costUsd;
+          }
+
+          baseInsertData.planningTotalUsage = planningUsageTotal;
+          baseInsertData.planningTotalCostUsd = planningCostTotal.toString();
+        }
+
+        try {
+          await this.db.insert(dags).values(baseInsertData);
+        } catch (dbError) {
+          const errorMessage = dbError instanceof Error ? dbError.message : String(dbError);
+          this.logger.error({ err: dbError, dagId }, 'Failed to insert clarification DAG into database');
+          throw new Error(`Database insert failed for clarification DAG ${dagId}: ${errorMessage}`);
+        }
+
+        this.logger.info({ dagId, agentName, clarificationQuery: dag.clarification_query }, 'Clarification DAG saved to database');
+
         return {
           status: 'clarification_required',
+          dagId,
           clarificationQuery: dag.clarification_query || '',
-          result: dag,
-          usage,
-          generationStats,
         };
       }
 
