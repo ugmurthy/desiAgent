@@ -1,30 +1,24 @@
 /**
  * Example:  Execute a DAG give dagid
  *
- * This example demonstrates how to:
- * 1. Initialize the desiAgent client
- * 2. Create a DAG from goal text
- * 3. Execute the created DAG
- * 4. Monitor execution status
- *
- * Run with: bun run examples/execute-bg-dag.ts
+ * Usage: bun run examples/execute-bg-dag-id.ts <dagId>
  */
 
 import { setupDesiAgent } from '../src/index.js';
 
-async function main() {
+async function main(dagId: string) {
   const client = await setupDesiAgent({
     llmProvider: 'openrouter',
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'google/gemini-2.5-flash-lite-preview-09-2025',
-    logLevel: 'info',
+    databasePath:process.env.DATABASE_PATH
   });
 
   try {
    
     // Execute the DAG
     console.log('\nExecuting DAG...');
-    const execution = await client.dags.execute("dag_hTNxi7GVnTrSRoQgSofDg");
+    const execution = await client.dags.execute(dagId);
 
     
     console.log('Execution started!');
@@ -58,4 +52,25 @@ async function main() {
   }
 }
 
-main();
+const usage = `Usage: bun run examples/execute-bg-dag-id.ts <dagId>
+
+Arguments:
+  dagId    The DAG ID to execute (e.g., dag_hTNxi7GVnTrSRoQgSofDg)
+
+Options:
+  -h, --help    Show this help message`;
+
+const arg = process.argv[2];
+
+if (arg === '-h' || arg === '--help') {
+  console.log(usage);
+  process.exit(0);
+}
+
+if (!arg) {
+  console.error('Error: dagId is required\n');
+  console.error(usage);
+  process.exit(1);
+}
+
+main(arg);

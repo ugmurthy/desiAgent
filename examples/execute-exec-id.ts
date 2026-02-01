@@ -16,6 +16,7 @@ async function main() {
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'google/gemini-2.5-flash-lite-preview-09-2025',
     logLevel: 'info',
+    databasePath:process.env.DATABASE_PATH
   });
 
   

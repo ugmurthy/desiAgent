@@ -20,6 +20,17 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf-8').trim();
 }
 
+function usage() {
+  console.log(`
+Usage: bun run examples/execute-goal.ts [options]
+
+Options:
+  -f, --file <filename>  Read goal from file
+  -s, --skill <skill>    Use specified skill
+  -h, --help             Show this help message
+`);
+}
+
 function getSkillContent(skillName: string): string {
   const skillPath = join(homedir(), '.config', 'amp', 'skills', skillName, 'SKILL.md');
   if (!existsSync(skillPath)) {
@@ -30,31 +41,48 @@ function getSkillContent(skillName: string): string {
 }
 
 async function getGoal(): Promise<string> {
-  const { values } = parseArgs({
-    args: process.argv.slice(2),
-    options: {
-      f: { type: 'string' },
-      skill: { type: 'string' },
-    },
-  });
+  try {
+    const { values } = parseArgs({
+      args: process.argv.slice(2),
+      options: {
+        file: { type: 'string', short: 'f' },
+        skill: { type: 'string', short: 's' },
+        help: { type: 'boolean', short: 'h' },
+      },
+    });
 
-  let goal: string;
+    let goal: string;
 
-  if (values.f) {
-    goal = readFileSync(values.f, 'utf-8').trim();
-  } else if (!process.stdin.isTTY) {
-    goal = await readStdin();
-  } else {
-    console.log('No goal provided. Use -f <filename> or pipe input via stdin.');
+    if (values.help) {
+      usage();
+      process.exit(0);
+    }
+
+    if (values.file) {
+      goal = readFileSync(values.file, 'utf-8').trim();
+    } else if (!process.stdin.isTTY) {
+      goal = await readStdin();
+    } else {
+      console.log('No goal provided. Use -f <filename> or pipe input via stdin.');
+      usage();
+      process.exit(1);
+    }
+
+    if (values.skill) {
+      const skillContent = getSkillContent(values.skill);
+      goal = skillContent + '\n' + goal;
+    }
+    if (goal.length <= 10) {
+      console.log('Goal is too short. Please provide a more detailed goal.');
+      usage();
+      process.exit(1);  
+    }
+    return goal;
+  } catch (error) {
+    console.error('Error:', error instanceof Error ? error.message : error);
+    usage();
     process.exit(1);
   }
-
-  if (values.skill) {
-    const skillContent = getSkillContent(values.skill);
-    goal = skillContent + '\n' + goal;
-  }
-
-  return goal;
 }
 
 async function main() {
@@ -81,6 +109,8 @@ async function main() {
       console.log('DAG creation did not return a dagId:', createResult.status);
       if (createResult.status === 'clarification_required') {
         console.log('Clarification needed:', createResult.clarificationQuery);
+      } else {
+        console.log('Error:', createResult.status);
       }
       return;
     }
@@ -92,7 +122,6 @@ async function main() {
     console.log('\nExecuting DAG...');
     const execution = await client.dags.execute(dagId);
 
-    
     console.log('Execution started!');
     console.log('  Execution ID:', execution.id);
     console.log('  Status:', execution.status);

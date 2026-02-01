@@ -1,0 +1,8 @@
+Read trading_strategies.pdf and write a implementation plan called trading-strategies-plan.md to do the following:
+
+Write code in python to appropriately named python files:
+1. Write code to Implement trading strategies as outlined in this pdf.
+2. Write code to implement a backtesting scaffold, it should be able to work based on historical data.
+3. Write code  to connect to the following brokerages: E*Trade, fidelity.
+4. Write code to pull historical market data by connecting to yahoo finance.
+

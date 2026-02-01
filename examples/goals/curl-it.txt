@@ -1,0 +1,4 @@
+I was a list of 10 todos from https://jsonplaceholder.typicode.com/ 
+create a curl command and get the list of todos and execute it.
+write the response to todos.json
+

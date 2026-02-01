@@ -1,29 +1,4 @@
-/**
- * Example: Create and Execute a DAG
- *
- * This example demonstrates how to:
- * 1. Initialize the desiAgent client
- * 2. Create a DAG from goal text
- * 3. Execute the created DAG
- * 4. Monitor execution status
- *
- * Run with: bun run examples/execute-dag.ts
- */
-
-import { setupDesiAgent } from '../src/index.js';
-
-async function main() {
-  const client = await setupDesiAgent({
-    llmProvider: 'openrouter',
-    openrouterApiKey: process.env.OPENROUTER_API_KEY,
-    modelName: 'google/gemini-2.5-flash-lite-preview-09-2025',
-    logLevel: 'info',
-  });
-
-  try {
-    console.log('Creating DAG from goal...\n');
-    const goal = `
-    You are an expert AI research agent specializing in market entry strategies for the quick commerce sector. Your task is to conduct comprehensive, data-driven research on entering the quick commerce market in India as a new entrant, with the goal of operating effectively and providing stiff competition to incumbents like Blinkit (Zomato), Zepto, Swiggy Instamart, BigBasket, Dunzo, and others. Use reliable sources, including web searches, X (formerly Twitter) searches for real-time insights and user sentiments, browsing key websites (e.g., company reports, industry analyses from Statista, KPMG, RedSeer, etc.), and any relevant tools available to you. Prioritize recent data (post-2023) given the fast-evolving nature of the sector.
+You are an expert AI research agent specializing in market entry strategies for the quick commerce sector. Your task is to conduct comprehensive, data-driven research on entering the quick commerce market in India as a new entrant, with the goal of operating effectively and providing stiff competition to incumbents like Blinkit (Zomato), Zepto, Swiggy Instamart, BigBasket, Dunzo, and others. Use reliable sources, including web searches, X (formerly Twitter) searches for real-time insights and user sentiments, browsing key websites (e.g., company reports, industry analyses from Statista, KPMG, RedSeer, etc.), and any relevant tools available to you. Prioritize recent data (post-2023) given the fast-evolving nature of the sector.
 
 Structure your response as a detailed report, divided into clear sections with headings, subheadings, bullet points, tables for comparisons, and citations where applicable. Substantiate claims with evidence from sources, and include actionable recommendations tailored for a new entrant. Cover the following key areas in depth:
 
@@ -85,60 +60,13 @@ Structure your response as a detailed report, divided into clear sections with h
    - Step-by-step entry roadmap: Phase 1 (research/pilot), Phase 2 (launch), Phase 3 (scale), with timelines and KPIs.
    - Final SWOT analysis for the new entrant.
 
-Ensure your research is balanced: Search for diverse viewpoints (e.g., pro-incumbent vs. startup-friendly sources), avoid bias, and flag any data uncertainties. If data is conflicting, explain why and provide ranges. End with a summary of top 5-7 actionable insights for a strong market entry. Use tools iteratively if needed for deeper dives (e.g., follow up on URLs from initial searches).
- 
-    `
-    const createResult = await client.dags.createFromGoal({
-      goalText: goal,
-      agentName: 'DecomposerV8',
-      temperature: 0.7,
-    });
+Ensure your research is balanced: Search for diverse 
+viewpoints (e.g., pro-incumbent vs. startup-friendly sources), 
+avoid bias, and flag any data uncertainties. If data is conflicting, 
+explain why and provide ranges. End with a summary of top 5-7 actionable 
+insights for a strong market entry. Use tools iteratively if needed 
+for deeper dives (e.g., follow up on URLs from initial searches).
 
-    if (createResult.status !== 'success' || !('dagId' in createResult)) {
-      console.log('DAG creation did not return a dagId:', createResult.status);
-      if (createResult.status === 'clarification_required') {
-        console.log('Clarification needed:', createResult.clarificationQuery);
-      }
-      return;
-    }
+Write all sections of the compiled report to quick-commerce-entry-strategy.md
+Email the report to udupavarun@gamil.com
 
-    const dagId = createResult.dagId;
-    console.log('DAG created with ID:', dagId);
-
-    // Execute the DAG
-    console.log('\nExecuting DAG...');
-    const execution = await client.dags.execute(dagId);
-
-    
-    console.log('Execution started!');
-    console.log('  Execution ID:', execution.id);
-    console.log('  Status:', execution.status);
-    
-    
-    // Wait for execution to complete
-    for await (const event of client.executions.streamEvents(execution.id)) {
-      console.log('Event:', event.type, event.data);
-    }
-
-    // Get execution details with substeps
-    const executionDetails = await client.executions.getWithSubSteps(execution.id);
-    console.log('\nExecution Details:');
-    console.log('  Status:', executionDetails.status);
-    console.log('  SubSteps count:', executionDetails.subSteps?.length ?? 0);
-
-    if (executionDetails.subSteps && executionDetails.subSteps.length > 0) {
-      console.log('\nSubSteps:');
-      for (const step of executionDetails.subSteps) {
-        console.log(`  - Task ${step.taskId}: ${step.status}`);
-      }
-    }
-
-
-  } catch (error) {
-    console.error('Error:', error);
-  } finally {
-    await client.shutdown();
-  }
-}
-
-main();

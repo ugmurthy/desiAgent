@@ -1,0 +1,4 @@
+ A factory produces three types of products: P1, P2, and P3. Each product requires processing time on two machines, M1 and M2. P1 requires 2 hours on M1 and 3 hours on M2, with a profit of $5 per unit. P2 requires 4 hours on M1 and 1 hour on M2, with a profit of $4 per unit. P3 requires 1 hour on M1 and 2 hours on M2, with a profit of $3 per unit. The factory has 100 hours available on M1 and 80 hours on M2 per week. Additionally, due to market demand, at most 20 units of P1 can be sold, and at least 10 units of P2 must be produced. The number of units produced for each product must be non-negative integers. Determine the number of units of each product to produce to maximize the total profit.
+
+  Provide the solution in a markdown table with the optimal number of units for each product and the total profit.
+ 

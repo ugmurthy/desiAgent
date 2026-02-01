@@ -17,9 +17,7 @@ export enum ExecutionStatus {
  */
 export interface DAG {
   id: string;
-  objective: string;
-  nodes: DAGNode[];
-  edges: DAGEdge[];
+  dagTitle: string;
   status: ExecutionStatus;
   createdAt: Date;
   updatedAt: Date;

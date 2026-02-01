@@ -1252,9 +1252,7 @@ export class DAGsService {
   private mapDAG(record: any): DAG {
     return {
       id: record.id,
-      objective: record.dagTitle || record.params?.goalText || record.params?.objective || '',
-      nodes: [],
-      edges: [],
+      dagTitle: record.dagTitle || '',
       status: record.status,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,

@@ -16,7 +16,7 @@ async function main() {
     llmProvider: 'openrouter',
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'openai/gpt-4o',
-    logLevel: 'warn',
+    logLevel: 'silent',
     databasePath: process.env.DATABASE_PATH
   });
 
@@ -30,9 +30,10 @@ async function main() {
       console.log('No DAGs found.');
     } else {
       console.log(`Found ${allDags.length} DAG(s):\n`);
+      //console.log(JSON.stringify(allDags[0],null,2));
 
       for (const dag of allDags) {
-        console.log(`ID: ${dag.id} : ${dag.objective}`);
+        console.log(`ID: ${dag.id} : ${dag.status} ${dag.dagTitle}`);
         
         
         if (dag.metadata?.cronSchedule) {
