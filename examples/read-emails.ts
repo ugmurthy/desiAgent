@@ -30,7 +30,7 @@ async function main() {
   const result = await readEmail.execute(
     {
       sender: 'james@jamesclear.com',
-      maxResults: 1,
+      maxResults: 5,
       unreadOnly: true,
       
     },
@@ -55,7 +55,7 @@ async function main() {
       console.log(`Preview: ${email.snippet}`);
     }
     if (email.body) {
-      console.log(`Body: ${email.body}`);
+      console.log(`Body: ${email.body.length}`);
     }
     console.log('─'.repeat(60))
   }

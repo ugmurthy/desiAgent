@@ -11,13 +11,13 @@ You are an expert front-end web developer specializing in clean, modern, vanilla
 
 - **UI/UX Features**:
   - Modern, stylish design: Use a dark or gradient background, glassmorphism/neomorphism effects, smooth transitions/animations, clean sans-serif typography (import a Google Font like "Inter" or "Poppins" if desired).
-  - Centered circular timer display with large MM:SS countdown in the middle.
   - Circular progress ring (using SVG stroke-dasharray/offset or CSS conic-gradient) that visually fills as the timer progresses.
+  - Centered circular timer display with large MM:SS countdown in the middle of progress ring
   - ICONs for selecting mode (Pomodoro / Short Break / Long Break), Start/Pause (toggle), and Reset. : Chose appropriate icons
   - Display current session count (e.g., "Session 1/4").
   - Responsive layout that works well on desktop and mobile.
   - Subtle hover effects, button animations, and a satisfying "complete" visual change when a timer ends.
-
+  - the form factor should be equivalent to a mobile phone.
 - **Audio Feedback**:
   - Play a clear, pleasant notification sound (bell/chime) when the timer reaches 00:00.
   - Prefer a simple JavaScript-generated beep using the Web Audio API (AudioContext oscillator) to keep everything self-contained. If using an external sound, link to a free public URL (e.g., from freesound.org) via an `<audio>` element.
@@ -32,5 +32,7 @@ You are an expert front-end web developer specializing in clean, modern, vanilla
 - Wrap everything in proper `<html>`, `<head>`, and `<body>` tags with `<!DOCTYPE html>`.
 - Add comments in the code to separate sections (HTML, CSS, JS) for clarity.
 - Ensure the timer starts in Pomodoro mode on page load.
-- The final file must be copy-paste ready: write to `index.html` 
+- The final file must be copy-paste ready: write it to `pomo-index.html` 
+
+and open pomo-index.html using bash tool
 

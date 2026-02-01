@@ -1,42 +1,49 @@
 /**
- * Example: List all Tools
+ * Example: List all Tools or retrieve a specific tool
  *
  * Run with: bun run examples/list-tools.ts
  * Options:
- *   --names    Only list tool names
+ *   --names           Only list tool names
+ *   --tool <name>     Retrieve a specific tool by name
  */
 
 import { setupDesiAgent } from '../src/index.js';
 
 async function main() {
   const namesOnly = process.argv.includes('--names');
+  const toolIndex = process.argv.indexOf('--tool');
+  const toolName = toolIndex !== -1 ? process.argv[toolIndex + 1] : null;
 
   const client = await setupDesiAgent({
     llmProvider: 'openrouter',
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'openai/gpt-4o',
-    logLevel: 'warn',
+    logLevel: 'silent',
     databasePath: process.env.DATABASE_PATH
   });
 
   try {
-    const tools = await client.tools.list();
-
-    if (namesOnly) {
-      console.log(`Listing ${tools.length} Tool Names...\n`);
-      tools.forEach((tool) => {
-        console.log(tool.function.name);
-      });
+    if (toolName) {
+      const tool = await client.tools.get(toolName);
+      if (tool) {
+        console.log(JSON.stringify(tool, null, 2));
+      } else {
+        console.log(`Tool "${toolName}" not found.`);
+      }
     } else {
-      // console.log(`Listing ${tools.length} Tools...\n`);
-      // tools.forEach((tool) => {
-      //   const { name, description } = tool.function;
-      //   console.log(`Tool: ${name} - ${description}`);
-      // });
-      console.log(JSON.stringify(tools, null, 2));
+      const tools = await client.tools.list();
+
+      if (namesOnly) {
+        console.log(`Listing ${tools.length} Tool Names...\n`);
+        tools.forEach((tool) => {
+          console.log(tool.function.name);
+        });
+      } else {
+        console.log(JSON.stringify(tools, null, 2));
+      }
     }
   } catch (error) {
-    console.error('Error listing tools:', error);
+    console.error('Error:', error);
   }
 }
 

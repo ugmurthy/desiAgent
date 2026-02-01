@@ -272,6 +272,15 @@ export { AgentsService } from './core/execution/agents.js';
 export { ToolsService } from './core/execution/tools.js';
 export { ArtifactsService } from './core/execution/artifacts.js';
 
+// Custom inference
+export {
+  customInference,
+  CustomInferenceInputSchema,
+  type CustomInferenceInput,
+  type CustomInferenceOutput,
+  type InferenceContext,
+} from './core/execution/inference.js';
+
 // Utility exports
 export { validateCronExpression } from './util/cron-validator.js';
 export {

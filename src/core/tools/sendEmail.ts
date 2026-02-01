@@ -19,7 +19,10 @@ const attachmentSchema = z.object({
 });
 
 const sendEmailInputSchema = z.object({
-  to: z.string().email().describe('Recipient email address'),
+  to: z.union([
+    z.string().email(),
+    z.array(z.string().email()),
+  ]).describe('Recipient email address(es) - single email or array of emails'),
   subject: z.string().describe('Email subject line'),
   body: z.string().describe('Email body content (plain text or HTML)'),
   cc: z.union([
@@ -39,7 +42,7 @@ type SendEmailInput = z.infer<typeof sendEmailInputSchema>;
 interface SendEmailOutput {
   success: boolean;
   messageId?: string;
-  to: string;
+  to: string | string[];
   subject: string;
   attachmentCount?: number;
   error?: string;
@@ -104,7 +107,7 @@ export class SendEmailTool extends BaseTool<any, SendEmailOutput> {
 
       const mailOptions: nodemailer.SendMailOptions = {
         from,
-        to: input.to,
+        to: this.normalizeEmailList(input.to),
         subject: input.subject,
       };
 

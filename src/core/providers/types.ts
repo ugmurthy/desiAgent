@@ -7,11 +7,35 @@
 import type { ToolDefinition } from '../../types/index.js';
 
 /**
+ * Image content part for multimodal messages
+ */
+export interface ImageContentPart {
+  type: 'image_url';
+  image_url: {
+    url: string;
+    detail?: 'auto' | 'low' | 'high';
+  };
+}
+
+/**
+ * Text content part for multimodal messages
+ */
+export interface TextContentPart {
+  type: 'text';
+  text: string;
+}
+
+/**
+ * Content can be a string or array of content parts (for multimodal)
+ */
+export type MessageContent = string | (TextContentPart | ImageContentPart)[];
+
+/**
  * Message in a conversation
  */
 export interface Message {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: MessageContent;
 }
 
 /**
