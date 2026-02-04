@@ -20,7 +20,7 @@ async function main() {
     logLevel: 'silent',
     databasePath: process.env.DATABASE_PATH
   });
-
+  
  
   try {
     // List all DAGs
@@ -40,7 +40,7 @@ async function main() {
         //console.log(`${JSON.stringify(e,null,2)}`)
         //console.log(`Substep ${JSON.stringify(st[0])}`)
         for (const step of st) {
-          console.log(`╰─${step.taskId} : ${step.status} ${step.toolOrPromptName}\n\t╰─Relies on result of: ${step.dependencies}\n\t╰─${step.thought}\n\t╰─${step.description}`);
+          console.log(`╰─${step.taskId} ${typeof step.result} : ${step.status} ${step.toolOrPromptName}\n\t╰─Relies on result of: ${step.dependencies}\n\t╰─${step.thought}\n\t╰─${step.description}`);
         }
         
 

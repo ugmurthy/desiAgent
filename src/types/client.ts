@@ -60,6 +60,14 @@ export interface ValidationErrorResult {
 
 export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult;
 
+export interface DAGExecutionStartedResult {
+  status: string;
+  dagId: string;
+  executionId: string;
+}
+
+export type CreateAndExecuteResult = ClarificationRequiredResult | ValidationErrorResult | DAGExecutionStartedResult;
+
 /**
  * Scheduled DAG info
  */
@@ -88,10 +96,9 @@ export interface RunExperimentsInput {
  */
 export interface DAGsService {
   createFromGoal(options: CreateDAGFromGoalOptions): Promise<DAGPlanningResult>;
-  createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<{ dagId: string; executionId: string }>;
+  createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<CreateAndExecuteResult>;
   resumeFromClarification(dagId: string, userResponse: string): Promise<DAGPlanningResult>;
   execute(dagId: string, options?: { provider?: string; model?: string }): Promise<{ id: string; status: string }>;
-  executeDefinition(options: { definition: any; originalGoalText: string }): Promise<{ id: string; status: string }>;
   resume(executionId: string): Promise<{ id: string; status: string; retryCount: number }>;
   get(id: string): Promise<DAG>;
   list(filter?: DAGFilter): Promise<DAG[]>;

@@ -105,18 +105,17 @@ export interface ValidationErrorResult {
 
 export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult;
 
+export interface DAGExecutionStartedResult {
+  status: string
+  dagId: string;
+  executionId: string;
+}
+
+export type CreateAndExecuteResult = ClarificationRequiredResult | ValidationErrorResult | DAGExecutionStartedResult;
+
 export interface ExecuteOptions {
   provider?: 'openai' | 'openrouter' | 'ollama';
   model?: string;
-  /**
-   * Execution configuration for performance tuning
-   */
-  executionConfig?: ExecutionConfig;
-}
-
-export interface ExecuteDefinitionOptions {
-  definition: DecomposerJob;
-  originalGoalText: string;
   /**
    * Execution configuration for performance tuning
    */
@@ -665,30 +664,36 @@ export class DAGsService {
     throw new ValidationError(`Failed to create DAG after ${maxAttempts} attempts`, 'attempts', maxAttempts);
   }
 
-  async createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<{ dagId: string; executionId: string }> {
+  async createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<CreateAndExecuteResult> {
     const planningResult = await this.createFromGoal(options);
 
-    if (planningResult.status === 'clarification_required') {
-      throw new ValidationError(
-        `Clarification required: ${planningResult.clarificationQuery}`,
-        'clarification',
-        planningResult.clarificationQuery
-      );
+    if (planningResult.status !== 'success') {
+      return planningResult;  
     }
-
-    if (planningResult.status === 'validation_error') {
-      throw new ValidationError(
-        `Validation failed for DAG ${planningResult.dagId}`,
-        'validation',
-        planningResult.dagId
-      );
-    }
-
+    
     const executionResult = await this.execute(planningResult.dagId);
     return {
+      status: executionResult.status,
       dagId: planningResult.dagId,
       executionId: executionResult.id,
     };
+    // if (planningResult.status === 'clarification_required') {
+    //   throw new ValidationError(
+    //     `Clarification required: ${planningResult.clarificationQuery}`,
+    //     'clarification',
+    //     planningResult.clarificationQuery
+    //   );
+    // }
+
+    // if (planningResult.status === 'validation_error') {
+    //   throw new ValidationError(
+    //     `Validation failed for DAG ${planningResult.dagId}`,
+    //     'validation',
+    //     planningResult.dagId
+    //   );
+    // }
+
+    
   }
 
   async resumeFromClarification(dagId: string, userResponse: string): Promise<DAGPlanningResult> {
@@ -832,75 +837,6 @@ export class DAGsService {
 
     // Start execution in background - don't await
     dagExecutor.execute(job, executionId, dagId, originalGoalText, _options?.executionConfig).catch((error) => {
-      this.logger.error({ err: error, executionId }, 'DAG execution failed');
-    });
-
-    return { id: executionId, status: 'pending' };
-  }
-
-  // @TODO ask Oracle why is this function required
-  async executeDefinition(options: ExecuteDefinitionOptions): Promise<{ id: string; status: string }> {
-    const { definition: job, originalGoalText, executionConfig } = options;
-
-    if (job.clarification_needed) {
-      throw new ValidationError(
-        `Clarification required: ${job.clarification_query}`,
-        'clarification',
-        job.clarification_query
-      );
-    }
-
-    const executionId = generateDAGExecutionId();
-    const now = new Date();
-
-    await this.db.insert(dagExecutions).values({
-      id: executionId,
-      dagId: null,
-      originalRequest: originalGoalText,
-      primaryIntent: job.intent.primary,
-      status: 'pending',
-      totalTasks: job.sub_tasks.length,
-      completedTasks: 0,
-      failedTasks: 0,
-      waitingTasks: 0,
-      retryCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await this.db.insert(dagSubSteps).values(
-      job.sub_tasks.map((task) => ({
-        id: generateSubStepId(),
-        executionId: executionId,
-        taskId: task.id,
-        description: task.description,
-        thought: task.thought,
-        actionType: task.action_type as 'tool' | 'inference',
-        toolOrPromptName: task.tool_or_prompt.name,
-        toolOrPromptParams: task.tool_or_prompt.params || {},
-        dependencies: task.dependencies,
-        status: 'pending' as const,
-        createdAt: now,
-        updatedAt: now,
-      }))
-    );
-
-    this.logger.info({
-      executionId,
-      primaryIntent: job.intent.primary,
-      totalTasks: job.sub_tasks.length,
-    }, 'Ad-hoc DAG execution records created');
-
-    // Execute the DAG asynchronously (fire and forget)
-    const dagExecutor = new DAGExecutor({
-      db: this.db,
-      llmProvider: this.llmProvider,
-      toolRegistry: this.toolRegistry,
-      artifactsDir: this.artifactsDir,
-    });
-
-    // Start execution in background - don't await
-    dagExecutor.execute(job, executionId, undefined, originalGoalText, executionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG execution failed');
     });
 

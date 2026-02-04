@@ -243,7 +243,6 @@ export type {
   DAGCreatedResult,
   ValidationErrorResult,
   ExecuteOptions,
-  ExecuteDefinitionOptions,
   RunExperimentsInput,
   DagScheduler,
   DAGsServiceDeps,

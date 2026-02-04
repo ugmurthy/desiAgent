@@ -11,6 +11,8 @@
 
 import { setupDesiAgent } from '../src/index.js';
 
+const isRaw = process.argv.includes('--raw');
+
 async function main() {
   const client = await setupDesiAgent({
     llmProvider: 'openrouter',
@@ -23,8 +25,15 @@ async function main() {
  
   try {
     // List all DAGs
+    const allDags = await client.dags.list( );
+
+    if (isRaw) {
+      //console.log(JSON.stringify(allDags,null,2));
+      console.log(JSON.stringify(Object.keys(allDags[0])),"n=",allDags.length);
+      return;
+    }
+
     console.log('Listing all DAGs...\n');
-    const allDags = await client.dags.list();
 
     if (allDags.length === 0) {
       console.log('No DAGs found.');
