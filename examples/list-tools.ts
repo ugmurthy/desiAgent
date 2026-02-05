@@ -18,7 +18,7 @@ async function main() {
     llmProvider: 'openrouter',
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
     modelName: 'openai/gpt-4o',
-    logLevel: 'silent',
+    logLevel: 'warn',
     databasePath: process.env.DATABASE_PATH
   });
 
