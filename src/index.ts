@@ -305,5 +305,13 @@ export {
   InitializationError,
 } from './errors/index.js';
 
+// Email tool
+export {
+  sendEmailTool,
+  SendEmailInputSchema,
+  type SendEmailInput,
+  type SendEmailOutput,
+} from './util/sendEmailTool.js';
+
 // Database initialization
 export { initDB, type InitDBOptions, type InitDBResult } from './services/initDB.js';
