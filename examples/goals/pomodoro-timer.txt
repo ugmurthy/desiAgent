@@ -34,5 +34,5 @@ You are an expert front-end web developer specializing in clean, modern, vanilla
 - Ensure the timer starts in Pomodoro mode on page load.
 - The final file must be copy-paste ready: write it to `pomo-index.html` 
 
-and open pomo-index.html using bash tool
+and open pomodoro-index.html using bash tool
 

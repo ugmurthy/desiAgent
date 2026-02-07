@@ -1,0 +1,7 @@
+Explain Reverse proxy with Cloudflare : Here is my scenario
+1. laptop is running a a dev server using command `npm vite dev --host 0.0.0.0` 
+I want an iPhone which is outside the local network to access the dev server using a browser
+
+Write the final solutions to reverse-proxy.md 
+
+
