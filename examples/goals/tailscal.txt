@@ -1,0 +1,2 @@
+I am using Tailscale to connect my iPhone over Tailscale network to connect to my laptop over ssh using Termius. How can i access a external domain from my phone via the laptop
+

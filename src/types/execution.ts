@@ -150,16 +150,25 @@ export interface SubStep {
  * Execution event for streaming
  */
 export enum ExecutionEventType {
+  // Lifecycle
   Started = 'execution:started',
-  StepCompleted = 'execution:step_completed',
-  StepFailed = 'execution:step_failed',
-  ToolCalled = 'execution:tool_called',
-  ToolCompleted = 'execution:tool_completed',
-  ToolFailed = 'execution:tool_failed',
   Completed = 'execution:completed',
   Failed = 'execution:failed',
-  Paused = 'execution:paused',
-  Resumed = 'execution:resumed',
+  Suspended = 'execution:suspended',
+
+  // Wave-level
+  WaveStarted = 'execution:wave_started',
+  WaveCompleted = 'execution:wave_completed',
+
+  // Task-level
+  TaskStarted = 'execution:task_started',
+  TaskProgress = 'execution:task_progress',
+  TaskCompleted = 'execution:task_completed',
+  TaskFailed = 'execution:task_failed',
+
+  // Synthesis
+  SynthesisStarted = 'execution:synthesis_started',
+  SynthesisCompleted = 'execution:synthesis_completed',
 }
 
 /**
@@ -168,8 +177,7 @@ export enum ExecutionEventType {
 export interface ExecutionEvent {
   type: ExecutionEventType;
   executionId: string;
-  timestamp: Date;
-  stepIndex?: number;
+  ts: number;
   data?: Record<string, any>;
   error?: {
     message: string;

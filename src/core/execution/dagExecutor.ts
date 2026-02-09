@@ -410,10 +410,10 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       this.emitEventIfEnabled(execConfig, {
         type: ExecutionEventType.Started,
         executionId: execId,
-        timestamp: new Date(),
+        ts: Date.now(),
         data: {
-          totalTasks: job.sub_tasks.length,
-          originalRequest: effectiveOriginalRequest,
+          total: job.sub_tasks.length,
+          request: effectiveOriginalRequest,
         },
       });
 
@@ -460,12 +460,13 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         }
 
         this.emitEventIfEnabled(execConfig, {
-          type: ExecutionEventType.StepCompleted,
+          type: ExecutionEventType.TaskStarted,
           executionId: execId,
-          timestamp: new Date(),
+          ts: Date.now(),
           data: {
-            subStepId: task.id,
-            status: 'started',
+            taskId: task.id,
+            type: task.action_type,
+            tool: task.tool_or_prompt.name,
             description: task.description,
           },
         });
@@ -481,18 +482,18 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           emitEvent: {
             progress: (message: string) => {
               this.emitEventIfEnabled(execConfig, {
-                type: ExecutionEventType.ToolCalled,
+                type: ExecutionEventType.TaskProgress,
                 executionId: execId,
-                timestamp: new Date(),
-                data: { message, subStepId: task.id },
+                ts: Date.now(),
+                data: { taskId: task.id, message },
               });
             },
             completed: (message: string) => {
               this.emitEventIfEnabled(execConfig, {
-                type: ExecutionEventType.ToolCompleted,
+                type: ExecutionEventType.TaskProgress,
                 executionId: execId,
-                timestamp: new Date(),
-                data: { message, subStepId: task.id },
+                ts: Date.now(),
+                data: { taskId: task.id, message },
               });
             },
           },
@@ -541,7 +542,10 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       };
 
       // Execute tasks in dependency order with wave-based batching
+      let waveNumber = 0;
+
       while (executedTasks.size < job.sub_tasks.length) {
+        waveNumber++;
         const readyTasks = job.sub_tasks.filter(
           task => !executedTasks.has(task.id) && canExecute(task)
         );
@@ -556,6 +560,17 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         // Collect wave results for batch DB update
         const waveResults: TaskWaveResult[] = [];
         const waveStartTime = Date.now();
+
+        this.emitEventIfEnabled(execConfig, {
+          type: ExecutionEventType.WaveStarted,
+          executionId: execId,
+          ts: Date.now(),
+          data: {
+            wave: waveNumber,
+            taskIds: readyTasks.map(t => t.id),
+            parallel: readyTasks.length,
+          },
+        });
 
         // Batch update all tasks in wave to 'running' status if batching enabled
         if (execConfig.batchDbUpdates && readyTasks.length > 0) {
@@ -608,16 +623,12 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
               }
 
               this.emitEventIfEnabled(execConfig, {
-                type: ExecutionEventType.StepCompleted,
+                type: ExecutionEventType.TaskCompleted,
                 executionId: execId,
-                timestamp: new Date(),
+                ts: Date.now(),
                 data: {
-                  subStepId: task.id,
-                  status: 'completed',
+                  taskId: task.id,
                   durationMs: Date.now() - taskExecStartTime,
-                  usage: execResult.usage,
-                  costUsd: execResult.costUsd?.toString(),
-                  generationStats: execResult.generationStats,
                 },
               });
             } catch (error) {
@@ -639,11 +650,12 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
                 ));
 
               this.emitEventIfEnabled(execConfig, {
-                type: ExecutionEventType.StepFailed,
+                type: ExecutionEventType.TaskFailed,
                 executionId: execId,
-                timestamp: new Date(),
+                ts: Date.now(),
                 data: {
-                  subStepId: task.id,
+                  taskId: task.id,
+                  durationMs: Date.now() - taskExecStartTime,
                 },
                 error: {
                   message: errorMessage,
@@ -687,15 +699,43 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             }, 'Batch updated wave completed tasks');
           }
         }
+
+        this.emitEventIfEnabled(execConfig, {
+          type: ExecutionEventType.WaveCompleted,
+          executionId: execId,
+          ts: Date.now(),
+          data: {
+            wave: waveNumber,
+            completedTasks: executedTasks.size,
+            totalTasks: job.sub_tasks.length,
+            durationMs: Date.now() - waveStartTime,
+          },
+        });
       }
 
       this.logger.info('All tasks completed, running synthesis');
+
+      const synthesisStartTime = Date.now();
+      this.emitEventIfEnabled(execConfig, {
+        type: ExecutionEventType.SynthesisStarted,
+        executionId: execId,
+        ts: synthesisStartTime,
+      });
 
       const synthesisResult = await this.synthesize(
         job.synthesis_plan,
         taskResults,
         execId
       );
+
+      this.emitEventIfEnabled(execConfig, {
+        type: ExecutionEventType.SynthesisCompleted,
+        executionId: execId,
+        ts: Date.now(),
+        data: {
+          durationMs: Date.now() - synthesisStartTime,
+        },
+      });
 
       this.logger.info('╰─Synthesis completed, running validation');
 
@@ -728,20 +768,19 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         this.emitEventIfEnabled(execConfig, {
           type: ExecutionEventType.Completed,
           executionId: execId,
-          timestamp: new Date(),
+          ts: Date.now(),
           data: {
             status: statusData.status,
             completedTasks: statusData.completedTasks,
             failedTasks: statusData.failedTasks,
             durationMs: Date.now() - startTime,
-            finalResult: validatedResult,
           },
         });
       } else if (statusData.status === 'failed') {
         this.emitEventIfEnabled(execConfig, {
           type: ExecutionEventType.Failed,
           executionId: execId,
-          timestamp: new Date(),
+          ts: Date.now(),
           error: {
             message: 'Execution failed',
           },
@@ -756,12 +795,12 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
       return validatedResult;
     } catch (error) {
-      await this.suspendExecution(execId, error);
+      await this.suspendExecution(execId, error, execConfig);
       throw error;
     }
   }
 
-  private async suspendExecution(executionId: string, error: unknown): Promise<void> {
+  private async suspendExecution(executionId: string, error: unknown, config: ExecutionConfig = {}): Promise<void> {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     this.logger.error({ executionId, err: error }, 'Suspending execution due to error');
@@ -774,10 +813,10 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       })
       .where(eq(dagExecutions.id, executionId));
 
-    ExecutionsService.emitEvent({
-      type: ExecutionEventType.Failed,
+    this.emitEventIfEnabled(config, {
+      type: ExecutionEventType.Suspended,
       executionId,
-      timestamp: new Date(),
+      ts: Date.now(),
       error: {
         message: errorMessage,
       },

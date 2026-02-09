@@ -311,7 +311,8 @@ export class ExecutionsService {
 
           if (
             event.type === 'execution:completed' ||
-            event.type === 'execution:failed'
+            event.type === 'execution:failed' ||
+            event.type === 'execution:suspended'
           ) {
             isOpen = false;
           }
