@@ -1,0 +1,33 @@
+You are an expert Solutions Architect specializing in AI-driven systems. Your task is to design a sufficiently complex, production-grade Solutions Architecture for a software-based system called "NL-Problem Solver" — an advanced AI platform that accepts complex, real-world problems described in natural language and solves them autonomously using AI.
+
+System Objectives Accept arbitrary complex problems expressed in natural language (e.g., "Design and simulate a sustainable urban drainage system for a city with 2M population facing 200-year flood events", or "Develop a 5-year investment strategy for a $10M portfolio given current geopolitical risks and inflation trends"). Autonomously decompose, research, reason, plan, execute multi-step actions, use external tools/APIs, perform computations, generate artifacts (code, reports, diagrams, simulations), and deliver a complete, verified solution with explanations. Handle multi-domain problems (scientific, engineering, financial, legal, creative, strategic) requiring iterative reasoning, external knowledge retrieval, tool usage, and self-verification. Be robust, scalable, secure, observable, and capable of long-running tasks (hours to days). Key Requirements Multi-agent architecture with specialized agents collaborating under supervision. Support for chain-of-thought, reflection, planning, tool use, memory (short-term and long-term), and self-correction. Integration of multiple AI models (LLMs, vision models, code generators, etc.). External tool ecosystem (web search, code execution, APIs, databases, simulators). Persistent state management for long-running tasks. Human-in-the-loop capabilities for review/approval. Security, cost control, traceability, and error recovery. Scalable deployment (cloud-native, containerized, serverless where appropriate). Deliverables Design and output a complete Solutions Architecture that includes:
+
+High-Level Architecture Diagram
+
+Provide a text-based diagram using Mermaid syntax (flowchart or component diagram) showing major components and data flows. Component Breakdown
+
+Detailed description of each major component/module, its responsibilities, and suggested technologies/frameworks (e.g., LangGraph, CrewAI, AutoGen, LlamaIndex, etc.). Agent Hierarchy & Roles
+
+Define at least 6–8 distinct agent types (e.g., Planner, Researcher, Executor, Verifier, Critic, Tool Specialist, Report Generator, Supervisor). Explain orchestration logic (how agents communicate, hand off tasks, resolve conflicts). Data Flows & State Management
+
+How tasks are decomposed, tracked, and persisted. Short-term (conversation/context) vs long-term memory (vector store, knowledge graph). Tool Integration Layer
+
+Categorize and list example tools (search, code interpreter, browsers, APIs, domain-specific simulators). Tool routing and safety mechanisms. AI Model Strategy
+
+Model selection (primary LLM, specialized models for code/math/vision). Prompt engineering patterns, routing, fallbacks. Infrastructure & Deployment
+
+Cloud provider assumptions, containerization (Docker/Kubernetes), serverless components, queuing (Redis, RabbitMQ, Kafka), databases (PostgreSQL, Pinecone/Weaviate for vectors). Scalability, rate limiting, cost monitoring. Security, Observability & Reliability
+
+Authentication, input/output sanitization, guardrails, audit logs, tracing (LangSmith or similar). Optional Extensions (to increase complexity)
+
+Multi-modal input/output support. Collaborative multi-user sessions. Plugin ecosystem for custom tools. Make the architecture sufficiently complicated — it should feel like an enterprise-grade, state-of-the-art autonomous AI agent platform, not a simple ReAct loop. Include sophisticated patterns such as hierarchical planning, agent debate/reflection, dynamic tool discovery, trajectory storage, and feedback loops.
+
+Output the entire architecture report in a clear, structured, professional format with sections, bullet points, and the Mermaid diagram(s). Use realistic, current technology choices (as of 2026).
+
+Note: 
+1. Avoid (,),- characters in text literals used in mermaid diagrams
+2. Report should have front matter with title, author, date, and excerpt
+
+Do not simplify; aim for depth and completeness suitable for implementation planning.
+
+Write the final report in markdown format to sys-arch.md and email it to ugmurthy@gmail.com

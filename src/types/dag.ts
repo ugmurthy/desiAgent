@@ -35,7 +35,7 @@ export const DecomposerJobSchema = z.object({
     iteration_triggers: z.array(z.string()),
   }),
   clarification_needed: z.boolean(),
-  clarification_query: z.string().optional(),
+  clarification_query: z.string().nullable().optional().transform(v => v ?? ""),
 }).refine(
   (data) => {
     if (data.clarification_needed) {
