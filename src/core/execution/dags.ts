@@ -5,7 +5,7 @@
  * DAGs represent decomposed workflows for complex objectives.
  */
 
-import { eq, desc, isNotNull, sql } from 'drizzle-orm';
+import { eq, desc, isNotNull, sql, gte, lte, and } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import cronstrue from 'cronstrue';
 import type { DrizzleDB } from '../../db/client.js';
@@ -918,10 +918,22 @@ export class DAGsService {
   }
 
   async list(filter?: DAGFilter): Promise<DAG[]> {
-    let query = this.db.select().from(dags).orderBy(desc(dags.createdAt));
+    const conditions = [];
 
     if (filter?.status) {
-      query = query.where(eq(dags.status, filter.status as any)) as any;
+      conditions.push(eq(dags.status, filter.status as any));
+    }
+    if (filter?.createdAfter) {
+      conditions.push(gte(dags.createdAt, filter.createdAfter));
+    }
+    if (filter?.createdBefore) {
+      conditions.push(lte(dags.createdAt, filter.createdBefore));
+    }
+
+    let query = this.db.select().from(dags).orderBy(desc(dags.createdAt));
+
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as any;
     }
 
     const allDAGs = await query.limit(filter?.limit || 100).offset(filter?.offset || 0);
