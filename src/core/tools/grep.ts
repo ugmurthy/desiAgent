@@ -63,6 +63,26 @@ export class GrepTool extends BaseTool<any, GrepOutput> {
     return inputPath.replace(/\.\./g, '');
   }
 
+  private normalizePattern(pattern: string, caseSensitive: boolean): { pattern: string; caseSensitive: boolean } {
+    let normalizedPattern = pattern;
+    let normalizedCaseSensitive = caseSensitive;
+
+    if (/\(\?i\)/.test(normalizedPattern)) {
+      normalizedPattern = normalizedPattern.replace(/\(\?i\)/g, '');
+      normalizedCaseSensitive = false;
+    }
+
+    if (/\(\?i:/.test(normalizedPattern)) {
+      normalizedPattern = normalizedPattern.replace(/\(\?i:/g, '(?:');
+      normalizedCaseSensitive = false;
+    }
+
+    return {
+      pattern: normalizedPattern,
+      caseSensitive: normalizedCaseSensitive,
+    };
+  }
+
   async execute(input: GrepInput, ctx: ToolContext): Promise<GrepOutput> {
     const ARTIFACTS_DIR = this.getArtifactsDir(ctx);
     const safePath = this.sanitizePath(input.path);
@@ -75,10 +95,11 @@ export class GrepTool extends BaseTool<any, GrepOutput> {
     ctx.logger.info(`Grep search: pattern="${input.pattern}" path="${safePath}"`);
     ctx.emitEvent?.started?.(`🔍 Searching for "${input.pattern}" in ${safePath}`);
 
-    const flags = input.caseSensitive ? 'g' : 'gi';
+    const normalized = this.normalizePattern(input.pattern, input.caseSensitive);
+    const flags = normalized.caseSensitive ? 'g' : 'gi';
     let regex: RegExp;
     try {
-      regex = new RegExp(input.pattern, flags);
+      regex = new RegExp(normalized.pattern, flags);
     } catch (error) {
       throw new Error(`Invalid regex pattern: ${input.pattern}`);
     }

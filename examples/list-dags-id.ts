@@ -6,11 +6,17 @@
  * 2. List all DAGs with optional filtering
  * 3. Display DAG information
  *
- * Run with: bun run examples/list-dags.ts
+ * Run with: bun run examples/list-dags-id.ts <dagId>
  */
 
 import { setupDesiAgent } from '../src/index.js';
-const dagId = "dag_EbvukFKKz6P4CveL-_sj_";
+
+const dagId = process.argv[2];
+
+if (!dagId) {
+  console.error('Usage: bun run examples/list-dags-id.ts <dagId>');
+  process.exit(1);
+}
 async function main() {
   const client = await setupDesiAgent({
     llmProvider: 'openrouter',

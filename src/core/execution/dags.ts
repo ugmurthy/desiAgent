@@ -737,11 +737,17 @@ export class DAGsService {
         const now = new Date();
         await this.db.update(dags).set({
           status: 'success',
+
           result: newDagRecord[0].result,
           usage: newDagRecord[0].usage,
           generationStats: newDagRecord[0].generationStats,
           attempts: (existingDag.attempts || 0) + (newDagRecord[0].attempts || 1),
           dagTitle: newDagRecord[0].dagTitle || existingDag.dagTitle,
+          params: {
+            ...(newDagRecord[0].params as Record<string, any> || {}),
+            ...(existingDag.params as Record<string, any> || {}),
+            goalText: augmentedGoalText,
+          },
           planningTotalUsage: newDagRecord[0].planningTotalUsage,
           planningTotalCostUsd: newDagRecord[0].planningTotalCostUsd,
           planningAttempts: [
