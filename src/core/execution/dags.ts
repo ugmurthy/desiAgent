@@ -890,6 +890,21 @@ export class DAGsService {
       totalTasks: job.sub_tasks.length,
     }, 'DAG execution records created');
 
+    // Create an internal AbortController and register it for stop-signal support
+    const internalController = new AbortController();
+    this.activeControllers.set(executionId, internalController);
+
+    // Combine with any externally-provided abortSignal from executionConfig
+    const externalSignal = _options?.executionConfig?.abortSignal;
+    const combinedSignal = externalSignal
+      ? AbortSignal.any([internalController.signal, externalSignal])
+      : internalController.signal;
+
+    const effectiveConfig: ExecutionConfig = {
+      ...(_options?.executionConfig || {}),
+      abortSignal: combinedSignal,
+    };
+
     // Execute the DAG asynchronously (fire and forget)
     const dagExecutor = new DAGExecutor({
       db: this.db,
@@ -898,10 +913,14 @@ export class DAGsService {
       artifactsDir: this.artifactsDir,
     });
 
-    // Start execution in background - don't await
-    dagExecutor.execute(job, executionId, dagId, originalGoalText, _options?.executionConfig).catch((error) => {
-      this.logger.error({ err: error, executionId }, 'DAG execution failed');
-    });
+    // Start execution in background - don't await, but clean up controller on completion
+    dagExecutor.execute(job, executionId, dagId, originalGoalText, effectiveConfig)
+      .catch((error) => {
+        this.logger.error({ err: error, executionId }, 'DAG execution failed');
+      })
+      .finally(() => {
+        this.activeControllers.delete(executionId);
+      });
 
     return { id: executionId, status: 'pending' };
   }
@@ -955,6 +974,20 @@ export class DAGsService {
     const job = DecomposerJobSchema.parse(dagRecord.result) as DecomposerJob;
     const originalGoalText = (dagRecord.params as any)?.goalText || job.original_request;
 
+    // Create an internal AbortController and register it for stop-signal support
+    const internalResumeController = new AbortController();
+    this.activeControllers.set(executionId, internalResumeController);
+
+    const externalResumeSignal = executionConfig?.abortSignal;
+    const combinedResumeSignal = externalResumeSignal
+      ? AbortSignal.any([internalResumeController.signal, externalResumeSignal])
+      : internalResumeController.signal;
+
+    const effectiveResumeConfig: ExecutionConfig = {
+      ...(executionConfig || {}),
+      abortSignal: combinedResumeSignal,
+    };
+
     const dagExecutor = new DAGExecutor({
       db: this.db,
       llmProvider: this.llmProvider,
@@ -962,10 +995,14 @@ export class DAGsService {
       artifactsDir: this.artifactsDir,
     });
 
-    // Start execution in background - don't await
-    dagExecutor.execute(job, executionId, execution.dagId, originalGoalText, executionConfig).catch((error) => {
-      this.logger.error({ err: error, executionId }, 'DAG resume execution failed');
-    });
+    // Start execution in background - don't await, but clean up controller on completion
+    dagExecutor.execute(job, executionId, execution.dagId, originalGoalText, effectiveResumeConfig)
+      .catch((error) => {
+        this.logger.error({ err: error, executionId }, 'DAG resume execution failed');
+      })
+      .finally(() => {
+        this.activeControllers.delete(executionId);
+      });
 
     return { id: executionId, status: 'running', retryCount: newRetryCount };
   }
