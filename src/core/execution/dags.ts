@@ -15,6 +15,10 @@ import { NotFoundError, ValidationError } from '../../errors/index.js';
 import { getLogger } from '../../util/logger.js';
 import { validateCronExpression } from '../../util/cron-validator.js';
 import {
+  insertStopRequestForDag,
+  insertStopRequestForExecution,
+} from '../../db/stopRequestHelpers.js';
+import {
   extractCodeBlock,
   renumberSubTasks,
   truncate,
@@ -156,6 +160,24 @@ export class DAGsService {
     this.agentsService = deps.agentsService;
     this.scheduler = deps.scheduler;
     this.artifactsDir = deps.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
+  }
+
+  /**
+   * Request a graceful stop for a DAG creation in progress.
+   * Idempotent — does not throw for non-existent dagIds.
+   */
+  async requestStopForDag(dagId: string): Promise<void> {
+    await insertStopRequestForDag(this.db, dagId);
+    this.logger.info({ dagId }, 'Stop request recorded for DAG');
+  }
+
+  /**
+   * Request a graceful stop for a running DAG execution.
+   * Idempotent — does not throw for non-existent executionIds.
+   */
+  async requestStopForExecution(executionId: string): Promise<void> {
+    await insertStopRequestForExecution(this.db, executionId);
+    this.logger.info({ executionId }, 'Stop request recorded for execution');
   }
 
   async createFromGoal(options: CreateDAGFromGoalOptions): Promise<DAGPlanningResult> {
