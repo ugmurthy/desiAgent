@@ -16,6 +16,10 @@ import { LlmExecuteTool } from '../tools/llmExecute.js';
 import { ExecutionsService } from './executions.js';
 import { ExecutionEventType } from '../../types/execution.js';
 import { getLogger } from '../../util/logger.js';
+import {
+  hasActiveStopRequestForExecution,
+  markStopRequestHandledForExecution,
+} from '../../db/stopRequestHelpers.js';
 
 
 export interface SubTask {
@@ -546,10 +550,41 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         throw new Error(`Unknown action type: ${task.action_type}`);
       };
 
+      // Helper: handle graceful stop — set execution to pending, leave completed/failed steps, mark stop handled
+      const handleStopDuringExecution = async (): Promise<string> => {
+        this.logger.info({ executionId: execId }, 'Stop signal detected during DAG execution — pausing gracefully');
+
+        // Set execution status to pending
+        await this.db.update(dagExecutions)
+          .set({ status: 'pending', updatedAt: new Date() })
+          .where(eq(dagExecutions.id, execId));
+
+        // Reset any 'running' sub-steps back to 'pending' (completed/failed are untouched)
+        const allSubSteps = await this.db.query.dagSubSteps.findMany({
+          where: eq(dagSubSteps.executionId, execId),
+        });
+        for (const step of allSubSteps) {
+          if (step.status === 'running') {
+            await this.db.update(dagSubSteps)
+              .set({ status: 'pending', startedAt: null, updatedAt: new Date() })
+              .where(eq(dagSubSteps.id, step.id));
+          }
+        }
+
+        await markStopRequestHandledForExecution(this.db, execId);
+        return 'stopped';
+      };
+
       // Execute tasks in dependency order with wave-based batching
       let waveNumber = 0;
 
       while (executedTasks.size < job.sub_tasks.length) {
+        // Check for stop signal before starting this wave
+        if (await hasActiveStopRequestForExecution(this.db, execId)) {
+          await handleStopDuringExecution();
+          return 'stopped';
+        }
+
         waveNumber++;
         const readyTasks = job.sub_tasks.filter(
           task => !executedTasks.has(task.id) && canExecute(task)
@@ -637,6 +672,20 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
                 },
               });
             } catch (error) {
+              // Handle abort errors gracefully — don't throw, let stop-handling logic take over
+              if (error instanceof Error && (error.name === 'AbortError' || execConfig.abortSignal?.aborted)) {
+                this.logger.info({ taskId: task.id, executionId: execId }, 'Task aborted due to stop signal');
+                waveResult.error = 'aborted';
+                // Reset task back to pending (will be handled by handleStopDuringExecution)
+                await this.db.update(dagSubSteps)
+                  .set({ status: 'pending', startedAt: null })
+                  .where(and(
+                    eq(dagSubSteps.taskId, task.id),
+                    eq(dagSubSteps.executionId, execId)
+                  ));
+                return; // Don't throw — let the wave complete and stop-check will handle
+              }
+
               const errorMessage = error instanceof Error ? error.message : String(error);
               this.logger.error({ err: errorMessage, taskId: task.id }, `Task ${task.id} failed`);
               waveResult.error = errorMessage;
@@ -716,6 +765,12 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             durationMs: Date.now() - waveStartTime,
           },
         });
+
+        // Check for stop signal after this wave completes
+        if (await hasActiveStopRequestForExecution(this.db, execId)) {
+          await handleStopDuringExecution();
+          return 'stopped';
+        }
       }
 
       this.logger.info('All tasks completed, running synthesis');
@@ -801,6 +856,15 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
       return validatedResult;
     } catch (error) {
+      // Handle abort errors gracefully — stop instead of suspend
+      if (error instanceof Error && (error.name === 'AbortError' || execConfig.abortSignal?.aborted)) {
+        this.logger.info({ executionId: execId }, 'Execution aborted due to stop signal — pausing gracefully');
+        await this.db.update(dagExecutions)
+          .set({ status: 'pending', updatedAt: new Date() })
+          .where(eq(dagExecutions.id, execId));
+        await markStopRequestHandledForExecution(this.db, execId);
+        return 'stopped';
+      }
       await this.suspendExecution(execId, error, execConfig);
       throw error;
     }
