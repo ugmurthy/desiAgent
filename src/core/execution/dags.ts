@@ -152,6 +152,7 @@ export class DAGsService {
   private scheduler?: DagScheduler;
   private artifactsDir: string;
   private logger = getLogger();
+  private activeControllers: Map<string, AbortController> = new Map();
 
   constructor(deps: DAGsServiceDeps) {
     this.db = deps.db;
@@ -168,6 +169,10 @@ export class DAGsService {
    */
   async requestStopForDag(dagId: string): Promise<void> {
     await insertStopRequestForDag(this.db, dagId);
+    const controller = this.activeControllers.get(dagId);
+    if (controller) {
+      controller.abort();
+    }
     this.logger.info({ dagId }, 'Stop request recorded for DAG');
   }
 
@@ -177,6 +182,10 @@ export class DAGsService {
    */
   async requestStopForExecution(executionId: string): Promise<void> {
     await insertStopRequestForExecution(this.db, executionId);
+    const controller = this.activeControllers.get(executionId);
+    if (controller) {
+      controller.abort();
+    }
     this.logger.info({ executionId }, 'Stop request recorded for execution');
   }
 
