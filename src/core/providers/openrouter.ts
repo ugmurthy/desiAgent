@@ -122,18 +122,45 @@ function extractCostFromGenerationStats(generationStats: any): number | undefine
   return undefined;
 }
 
+function createAbortSignal(
+  baseSignal: AbortSignal | undefined,
+  timeoutMs: number
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+
+  if (baseSignal) {
+    if (baseSignal.aborted) {
+      controller.abort();
+    } else {
+      baseSignal.addEventListener('abort', abort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      if (baseSignal && !baseSignal.aborted) {
+        baseSignal.removeEventListener('abort', abort);
+      }
+    },
+  };
+}
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  abortSignal?: AbortSignal
 ): Promise<Response> {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
-  
+  const { signal, cleanup } = createAbortSignal(abortSignal, timeoutMs);
+
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, { ...init, signal });
   } finally {
-    clearTimeout(id);
+    cleanup();
   }
 }
 
@@ -278,7 +305,9 @@ export class OpenRouterProvider implements LLMProvider {
           method: 'POST',
           headers: buildHeaders(this.apiKey),
           body: JSON.stringify(requestBody),
-        }
+        },
+        DEFAULT_TIMEOUT_MS,
+        params.abortSignal
       );
 
       if (!res.ok) {
@@ -332,7 +361,9 @@ export class OpenRouterProvider implements LLMProvider {
           method: 'POST',
           headers: buildHeaders(this.apiKey),
           body: JSON.stringify(requestBody),
-        }
+        },
+        DEFAULT_TIMEOUT_MS,
+        params.abortSignal
       );
 
       if (!res.ok) {

@@ -161,6 +161,7 @@ export class LlmExecuteTool extends BaseTool<LlmExecuteInput, LlmExecuteOutput> 
         messages,
         temperature,
         maxTokens,
+        abortSignal: ctx.abortSignal,
       });
 
       ctx.logger.debug('LLM execution completed');

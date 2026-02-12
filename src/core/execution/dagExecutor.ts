@@ -75,6 +75,10 @@ export interface ExecutionConfig {
    * Default: true
    */
   batchDbUpdates?: boolean;
+  /**
+   * Optional abort signal to cancel in-flight tool/LLM calls.
+   */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -381,6 +385,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     const execConfig: ExecutionConfig = {
       skipEvents: config.skipEvents ?? false,
       batchDbUpdates: config.batchDbUpdates ?? true,
+      abortSignal: config.abortSignal,
     };
 
     if (job.clarification_needed) {
@@ -475,7 +480,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           logger: this.logger,
           db: this.db,
           runId: `dag-${Date.now()}`,
-          abortSignal: new AbortController().signal,
+          abortSignal: execConfig.abortSignal,
           executionId: execId,
           subStepId: task.id,
           artifactsDir: this.artifactsDir,
@@ -725,7 +730,8 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       const synthesisResult = await this.synthesize(
         job.synthesis_plan,
         taskResults,
-        execId
+        execId,
+        execConfig.abortSignal
       );
 
       this.emitEventIfEnabled(execConfig, {
@@ -855,7 +861,8 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
   private async synthesize(
     plan: string,
     taskResults: Map<string, any>,
-    executionId: string
+    executionId: string,
+    abortSignal?: AbortSignal
   ): Promise<TaskExecutionResult> {
     const context = Array.from(taskResults.entries())
       .map(([taskId, result]) => {
@@ -884,6 +891,7 @@ Generate the final report in Markdown format as specified in the synthesis plan.
         { role: 'user', content: synthesisPrompt },
       ],
       temperature: 0.5,
+      abortSignal,
     });
 
     const synthesisSubStepId = generateSubStepId();

@@ -1,0 +1,85 @@
+{
+  "project": "desiAgent",
+  "branchName": "ralph/createfromgoal-persist-all",
+  "description": "createFromGoal() Unified Persistence & Response Refactor - Persist all DAG creation attempts to database regardless of outcome",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Persist clarification-needed DAGs",
+      "description": "As a system operator, I want clarification-needed DAGs persisted so that I can track incomplete planning attempts and resume them later.",
+      "acceptanceCriteria": [
+        "When clarification_needed is true, insert DAG record with status 'pending'",
+        "Store the DecomposerJob result in the result field (JSON stringified)",
+        "Include dagTitle from TitleMaster if available",
+        "Return { status: 'clarification_required', dagId: string, clarificationQuery: string }",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Persist validation-failed DAGs",
+      "description": "As a developer, I want failed DAG validations persisted so that I can debug why certain goals produce invalid structures.",
+      "acceptanceCriteria": [
+        "When DAG validation fails after max attempts, insert DAG record with status 'validation_error'",
+        "Store the raw failed response string in the result field (not JSON parsed)",
+        "Do NOT throw ValidationError - return response instead",
+        "Return { status: 'validation_error', dagId: string }",
+        "Include all planning attempts and usage tracking in the persisted record",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Unify return type for all outcomes",
+      "description": "As an API consumer, I want all createFromGoal outcomes to return a dagId so I can track and reference the planning attempt.",
+      "acceptanceCriteria": [
+        "Update DAGPlanningResult type to always include dagId: string",
+        "Success case: { status: 'success', dagId: string }",
+        "Clarification case: { status: 'clarification_required', dagId: string, clarificationQuery: string }",
+        "Validation error case: { status: 'validation_error', dagId: string }",
+        "Remove UnpersistedResult type (no longer needed)",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Update createAndExecuteFromGoal() caller",
+      "description": "As a developer, I want createAndExecuteFromGoal to handle the new unified response format.",
+      "acceptanceCriteria": [
+        "Update to check status field instead of type narrowing",
+        "Handle 'validation_error' status appropriately (throw or return error)",
+        "Handle 'clarification_required' status (throw as before)",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Completed as part of US-003"
+    },
+    {
+      "id": "US-005",
+      "title": "Resume clarification via dagId",
+      "description": "As a user, I want to resume a clarification-required DAG by providing my response so that I don't have to restart planning from scratch.",
+      "acceptanceCriteria": [
+        "Add resumeFromClarification(dagId: string, userResponse: string) method to DAGsService",
+        "Fetch existing DAG record by dagId, validate status is 'pending'",
+        "Append user response to original goal text and re-run planning",
+        "Reuse existing createFromGoal logic (DRY)",
+        "On success, update the existing DAG record (don't create new one)",
+        "Return same unified response format",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    }
+  ]
+}

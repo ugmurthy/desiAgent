@@ -30,7 +30,9 @@
     "db:generate": "drizzle-kit generate:sqlite --schema=src/db/schema.ts --out=src/db/migrations",
     "db:push": "drizzle-kit push:sqlite --schema=src/db/schema.ts --config=drizzle.config.ts",
     "db:studio": "drizzle-kit studio --schema=src/db/schema.ts --config=drizzle.config.ts",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test:abort:openrouter": "bun run scripts/test-openrouter-abort.ts",
+    "test:abort:ollama": "bun run scripts/test-ollama-abort.ts"
   },
   "keywords": [
     "agent",

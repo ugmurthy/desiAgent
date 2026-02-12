@@ -68,6 +68,7 @@ export interface ChatParams {
   messages: Message[];
   temperature?: number;
   maxTokens?: number;
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -88,6 +89,7 @@ export interface LLMCallParams {
   tools: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  abortSignal?: AbortSignal;
 }
 
 /**

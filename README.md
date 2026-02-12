@@ -214,6 +214,18 @@ bun run examples/news-bulletin.ts
 OPENROUTER_API_KEY=your-key bun run examples/news-bulletin-openrouter.ts
 ```
 
+## Manual Abort Tests
+
+Use these scripts to manually verify that abort signals cancel in-flight LLM calls.
+
+```bash
+# OpenRouter abort test
+OPENROUTER_API_KEY=sk-or-... ABORT_AFTER_MS=2000 bun run test:abort:openrouter
+
+# Ollama abort test
+OLLAMA_BASE_URL=http://localhost:11434 OLLAMA_MODEL=mistral ABORT_AFTER_MS=2000 bun run test:abort:ollama
+```
+
 ## Development
 
 ### Setup

@@ -1,84 +1,79 @@
 {
   "project": "desiAgent",
-  "branchName": "ralph/createfromgoal-persist-all",
-  "description": "createFromGoal() Unified Persistence & Response Refactor - Persist all DAG creation attempts to database regardless of outcome",
+  "branchName": "ralph/stop-signal-capability",
+  "description": "Stop Signal Capability - Add stop requests to abort DAG creation and pause execution without breaking APIs",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Persist clarification-needed DAGs",
-      "description": "As a system operator, I want clarification-needed DAGs persisted so that I can track incomplete planning attempts and resume them later.",
+      "title": "Add stop request persistence",
+      "description": "As a developer, I want stop requests stored in the database so multiple workers can detect them and they survive restarts.",
       "acceptanceCriteria": [
-        "When clarification_needed is true, insert DAG record with status 'pending'",
-        "Store the DecomposerJob result in the result field (JSON stringified)",
-        "Include dagTitle from TitleMaster if available",
-        "Return { status: 'clarification_required', dagId: string, clarificationQuery: string }",
+        "Add dagStopRequests table with fields: id, dagId, executionId, status, requestedAt, handledAt",
+        "Add indexes for dagId, executionId, and status",
+        "Add query to fetch most recent requested stop for a dagId or executionId",
+        "Add update to mark stop request handled with handledAt",
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "US-002",
-      "title": "Persist validation-failed DAGs",
-      "description": "As a developer, I want failed DAG validations persisted so that I can debug why certain goals produce invalid structures.",
+      "title": "Expose stop request service methods",
+      "description": "As a module consumer, I want service methods to request stops without changing public APIs.",
       "acceptanceCriteria": [
-        "When DAG validation fails after max attempts, insert DAG record with status 'validation_error'",
-        "Store the raw failed response string in the result field (not JSON parsed)",
-        "Do NOT throw ValidationError - return response instead",
-        "Return { status: 'validation_error', dagId: string }",
-        "Include all planning attempts and usage tracking in the persisted record",
+        "Add requestStopForDag(dagId) service method to record a stop request",
+        "Add requestStopForExecution(executionId) service method to record a stop request",
+        "Methods only record stop requests and do not mutate DAGs or executions",
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "US-003",
-      "title": "Unify return type for all outcomes",
-      "description": "As an API consumer, I want all createFromGoal outcomes to return a dagId so I can track and reference the planning attempt.",
+      "title": "Abort DAG creation on stop",
+      "description": "As a system operator, I want DAG creation to abort when a stop is requested so partial DAGs are not persisted.",
       "acceptanceCriteria": [
-        "Update DAGPlanningResult type to always include dagId: string",
-        "Success case: { status: 'success', dagId: string }",
-        "Clarification case: { status: 'clarification_required', dagId: string, clarificationQuery: string }",
-        "Validation error case: { status: 'validation_error', dagId: string }",
-        "Remove UnpersistedResult type (no longer needed)",
+        "Check for stop requests before each LLM call (including retries) and before persisting DAG records in createFromGoal",
+        "If stop detected and a new DAG was created in the attempt, delete the DAG record",
+        "Return status: 'failed' using existing failure response path",
+        "Log stop events with dagId or executionId",
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": true,
+      "passes": false,
       "notes": ""
     },
     {
       "id": "US-004",
-      "title": "Update createAndExecuteFromGoal() caller",
-      "description": "As a developer, I want createAndExecuteFromGoal to handle the new unified response format.",
+      "title": "Pause DAG execution on stop",
+      "description": "As a system operator, I want DAG execution to pause on stop so in-flight work is marked pending and can resume later.",
       "acceptanceCriteria": [
-        "Update to check status field instead of type narrowing",
-        "Handle 'validation_error' status appropriately (throw or return error)",
-        "Handle 'clarification_required' status (throw as before)",
+        "Check for stop requests before starting a task and after each task finishes",
+        "If stop detected after a task finishes, set dagExecutions.status to 'pending'",
+        "Update in-flight dagSubSteps to status 'pending' leaving completed or failed unchanged",
+        "Execution returns without throwing",
+        "Log stop events with dagId or executionId",
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "Completed as part of US-003"
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-005",
-      "title": "Resume clarification via dagId",
-      "description": "As a user, I want to resume a clarification-required DAG by providing my response so that I don't have to restart planning from scratch.",
+      "title": "Abort in-flight LLM calls on stop",
+      "description": "As a developer, I want LLM calls to cancel promptly when a stop is requested to reduce wasted work.",
       "acceptanceCriteria": [
-        "Add resumeFromClarification(dagId: string, userResponse: string) method to DAGsService",
-        "Fetch existing DAG record by dagId, validate status is 'pending'",
-        "Append user response to original goal text and re-run planning",
-        "Reuse existing createFromGoal logic (DRY)",
-        "On success, update the existing DAG record (don't create new one)",
-        "Return same unified response format",
+        "Pass AbortController signal to OpenAI, OpenRouter, and Ollama provider calls",
+        "Abort the controller when a stop request is detected to cancel in-flight LLM calls",
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": true,
+      "passes": false,
       "notes": ""
     }
   ]

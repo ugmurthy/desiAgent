@@ -78,7 +78,7 @@ export class OpenAIProvider implements LLMProvider {
         messages: params.messages as any,
         temperature: params.temperature ?? 0.7,
         max_tokens: params.maxTokens ?? this.defaultMaxTokens,
-      });
+      }, { signal: params.abortSignal });
 
       const content = response.choices[0]?.message.content || '';
 
@@ -115,7 +115,7 @@ export class OpenAIProvider implements LLMProvider {
         tools: params.tools as any,
         temperature: params.temperature ?? 0.7,
         max_tokens: params.maxTokens ?? this.defaultMaxTokens,
-      });
+      }, { signal: params.abortSignal });
 
       const choice = response.choices[0];
       const message = choice.message;

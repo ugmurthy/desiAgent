@@ -61,6 +61,7 @@ export class OllamaProvider implements LLMProvider {
           stream: false,
           temperature: params.temperature ?? 0.7,
         }),
+        signal: params.abortSignal,
       });
 
       if (!response.ok) {
@@ -99,6 +100,7 @@ export class OllamaProvider implements LLMProvider {
       messages: params.messages,
       temperature: params.temperature,
       maxTokens: params.maxTokens,
+      abortSignal: params.abortSignal,
     });
 
     // Try to parse tool calls from response (basic heuristic)

@@ -70,6 +70,7 @@ export interface CreateDAGFromGoalOptions {
   cronSchedule?: string;
   scheduleActive?: boolean;
   timezone?: string;
+  abortSignal?: AbortSignal;
 }
 
 interface PlanningAttempt {
@@ -241,6 +242,7 @@ export class DAGsService {
         ],
         temperature,
         maxTokens,
+        abortSignal: options.abortSignal,
       });
 
       const attemptUsage = response.usage;
@@ -408,7 +410,11 @@ export class DAGsService {
         const now = new Date();
         this.logger.info({ dagId }, 'DagID Generated for clarification');
 
-        const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText);
+        const titleMasterPromise = this.generateTitleAsync(
+          activeLLMProvider,
+          goalText,
+          options.abortSignal
+        );
 
         const baseInsertData = {
           id: dagId,
@@ -488,7 +494,11 @@ export class DAGsService {
         const now = new Date();
         this.logger.info({dagId},"DagID Generated")
         // Run TitleMaster generation in parallel with preparing insert data
-        const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText);
+        const titleMasterPromise = this.generateTitleAsync(
+          activeLLMProvider,
+          goalText,
+          options.abortSignal
+        );
         
         // Prepare base insert data (doesn't need title yet)
         const baseInsertData = {
@@ -593,7 +603,11 @@ export class DAGsService {
       const now = new Date();
       this.logger.info({ dagId }, 'DagID Generated for low-coverage DAG');
 
-      const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText);
+      const titleMasterPromise = this.generateTitleAsync(
+        activeLLMProvider,
+        goalText,
+        options.abortSignal
+      );
 
       const baseInsertData = {
         id: dagId,
@@ -1165,7 +1179,8 @@ export class DAGsService {
    */
   private async generateTitleAsync(
     llmProvider: LLMProvider,
-    goalText: string
+    goalText: string,
+    abortSignal?: AbortSignal
   ): Promise<{
     title: string;
     usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
@@ -1186,6 +1201,7 @@ export class DAGsService {
         ],
         temperature: 0.7,
         maxTokens: 100,
+        abortSignal,
       });
 
       const title = titleResponse.content.trim();
