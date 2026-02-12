@@ -152,7 +152,7 @@ export const dagSubSteps = sqliteTable('sub_steps', {
   dependencies: text('dependencies', { mode: 'json' }).notNull().$type<string[]>(),
 
   status: text('status', {
-    enum: ['pending', 'running', 'waiting', 'completed', 'failed']
+    enum: ['pending', 'running', 'waiting', 'completed', 'failed', 'deleted']
   }).notNull().default('pending'),
 
   startedAt: integer('started_at', { mode: 'timestamp' }),

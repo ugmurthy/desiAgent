@@ -65,7 +65,8 @@ export type SubStepStatus =
   | 'running'
   | 'waiting'
   | 'completed'
-  | 'failed';
+  | 'failed'
+  | 'deleted';
 
 /**
  * Execution of a DAG

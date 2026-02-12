@@ -33,7 +33,8 @@ export type SubStepStatus =
   | 'running'
   | 'waiting'
   | 'completed'
-  | 'failed';
+  | 'failed'
+  | 'deleted';
 
 /**
  * SubStep type matching new dagSubSteps schema

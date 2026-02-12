@@ -24,6 +24,7 @@ import { DecomposerJobSchema, type DecomposerJob } from '../../types/dag.js';
 import type { LLMProvider } from '../providers/types.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { createLLMProvider } from '../providers/factory.js';
+import { LlmExecuteTool } from '../tools/llmExecute.js';
 import type { AgentsService } from './agents.js';
 import { DAGExecutor, type ExecutionConfig } from './dagExecutor.js';
 
@@ -123,6 +124,11 @@ export interface ExecuteOptions {
   executionConfig?: ExecutionConfig;
 }
 
+export interface RedoInferenceParams {
+  provider?: 'openai' | 'openrouter' | 'ollama';
+  model?: string;
+}
+
 export interface RunExperimentsInput {
   goalText: string;
   agentName: string;
@@ -156,6 +162,119 @@ export class DAGsService {
     this.agentsService = deps.agentsService;
     this.scheduler = deps.scheduler;
     this.artifactsDir = deps.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
+  }
+
+  private buildGlobalContext(job: DecomposerJob): { formatted: string; totalTasks: number } {
+    const entitiesStr = job.entities.length > 0
+      ? job.entities.map((e) => `• ${e.entity} (${e.type}): ${e.grounded_value}`).join('\n')
+      : 'None';
+
+    const formatted = `# Global Context
+**Request:** ${job.original_request}
+**Primary Intent:** ${job.intent.primary}
+**Sub-intents:** ${job.intent.sub_intents.join('; ') || 'None'}
+**Entities:**
+${entitiesStr}
+**Synthesis Goal:** ${job.synthesis_plan}`;
+
+    return { formatted, totalTasks: job.sub_tasks.length };
+  }
+
+  private buildInferencePrompt(
+    task: DecomposerJob['sub_tasks'][number],
+    globalContext: { formatted: string; totalTasks: number },
+    taskResults: Map<string, any>
+  ): string {
+    const maxDepLength = 2000;
+
+    const depsStr = task.dependencies
+      .filter((id) => id !== 'none' && taskResults.has(id))
+      .map((id) => {
+        const result = taskResults.get(id);
+        const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+        return `[Task ${id}]: ${resultStr.length > maxDepLength ? resultStr.slice(0, maxDepLength) + '...' : resultStr}`;
+      })
+      .join('\n\n') || 'None';
+
+    return `You are an expert assistant executing a sub-task within a larger workflow.
+
+${globalContext.formatted}
+
+# Current Task [${task.id}/${globalContext.totalTasks}]
+**Description:** ${task.description}
+**Reasoning:** ${task.thought}
+**Expected Output:** ${task.expected_output}
+
+# Dependencies
+${depsStr}
+
+# Instruction
+${task.tool_or_prompt.params?.prompt || task.description}
+
+Respond with ONLY the expected output format. Build upon dependencies for coherence and align with the global context.`;
+  }
+
+  private deriveExecutionStatus(subSteps: Array<{ status: string }>): {
+    status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'partial';
+    completedTasks: number;
+    failedTasks: number;
+    waitingTasks: number;
+  } {
+    const completed = subSteps.filter((s) => s.status === 'completed').length;
+    const failed = subSteps.filter((s) => s.status === 'failed').length;
+    const running = subSteps.filter((s) => s.status === 'running').length;
+    const waiting = subSteps.filter((s) => s.status === 'waiting').length;
+    const total = subSteps.filter((s) => s.status !== 'deleted').length;
+
+    let status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'partial';
+
+    if (waiting > 0) {
+      status = 'waiting';
+    } else if (failed > 0 && completed + failed === total) {
+      status = failed === total ? 'failed' : 'partial';
+    } else if (completed === total) {
+      status = 'completed';
+    } else if (running > 0 || completed > 0) {
+      status = 'running';
+    } else {
+      status = 'pending';
+    }
+
+    return { status, completedTasks: completed, failedTasks: failed, waitingTasks: waiting };
+  }
+
+  private aggregateUsage(subSteps: Array<{ usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | null }>):
+    | { promptTokens: number; completionTokens: number; totalTokens: number }
+    | null {
+    let hasUsage = false;
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let totalTokens = 0;
+
+    for (const step of subSteps) {
+      if (step.usage) {
+        hasUsage = true;
+        promptTokens += step.usage.promptTokens ?? 0;
+        completionTokens += step.usage.completionTokens ?? 0;
+        totalTokens += step.usage.totalTokens ?? 0;
+      }
+    }
+
+    return hasUsage ? { promptTokens, completionTokens, totalTokens } : null;
+  }
+
+  private aggregateCost(subSteps: Array<{ costUsd?: string | null }>): number | null {
+    let totalCost = 0;
+    let hasCost = false;
+
+    for (const step of subSteps) {
+      if (step.costUsd) {
+        hasCost = true;
+        totalCost += parseFloat(step.costUsd);
+      }
+    }
+
+    return hasCost ? totalCost : null;
   }
 
   async createFromGoal(options: CreateDAGFromGoalOptions): Promise<DAGPlanningResult> {
@@ -691,22 +810,7 @@ export class DAGsService {
       dagId: planningResult.dagId,
       executionId: executionResult.id,
     };
-    // if (planningResult.status === 'clarification_required') {
-    //   throw new ValidationError(
-    //     `Clarification required: ${planningResult.clarificationQuery}`,
-    //     'clarification',
-    //     planningResult.clarificationQuery
-    //   );
-    // }
-
-    // if (planningResult.status === 'validation_error') {
-    //   throw new ValidationError(
-    //     `Validation failed for DAG ${planningResult.dagId}`,
-    //     'validation',
-    //     planningResult.dagId
-    //   );
-    // }
-
+   
     
   }
 
@@ -925,6 +1029,212 @@ export class DAGsService {
     });
 
     return { id: executionId, status: 'running', retryCount: newRetryCount };
+  }
+
+  async redoInference(
+    executionId: string,
+    params?: RedoInferenceParams
+  ): Promise<{ id: string; rerunCount: number }> {
+    if (params && (!params.provider || !params.model)) {
+      throw new ValidationError(
+        'provider and model are required when overrides are provided',
+        'params',
+        params
+      );
+    }
+
+    const [execution] = await this.db.select().from(dagExecutions).where(eq(dagExecutions.id, executionId)).limit(1);
+
+    if (!execution) {
+      throw new NotFoundError('DAG Execution', executionId);
+    }
+
+    if (execution.status !== 'completed') {
+      throw new ValidationError(
+        `Cannot redo inference for execution with status '${execution.status}'. Only completed executions are eligible.`,
+        'status',
+        execution.status
+      );
+    }
+
+    if (!execution.dagId) {
+      throw new ValidationError('Execution has no associated DAG. Cannot redo inference.', 'dagId', null);
+    }
+
+    const [dagRecord] = await this.db.select().from(dags).where(eq(dags.id, execution.dagId)).limit(1);
+    
+     if (!dagRecord) {
+       throw new NotFoundError('DAG', execution.dagId);
+     }
+
+     const job = DecomposerJobSchema.parse(dagRecord.result) as DecomposerJob;
+    // if (job.clarification_needed) {
+    //   throw new ValidationError(
+    //     `Clarification required: ${job.clarification_query}`,
+    //     'clarification',
+    //     job.clarification_query
+    //   );
+    // }
+
+    const allSubSteps = await this.db.query.dagSubSteps.findMany({
+      where: eq(dagSubSteps.executionId, executionId),
+      orderBy: [dagSubSteps.taskId],
+    });
+
+    const inferenceTargets = allSubSteps
+      .filter((step) => step.status === 'completed' && step.toolOrPromptName === 'inference')
+      .sort((a, b) => a.taskId.localeCompare(b.taskId));
+
+    if (inferenceTargets.length === 0) {
+      throw new ValidationError(
+        'No completed inference sub-steps found to redo.',
+        'subSteps',
+        executionId
+      );
+    }
+
+    const taskResults = new Map<string, any>();
+    const latestResults = new Map<string, { updatedAt: number; result: any }>();
+
+    for (const step of allSubSteps) {
+      if (step.status !== 'completed') {
+        continue;
+      }
+
+      const timestamp = step.updatedAt ? new Date(step.updatedAt).getTime() : 0;
+      const existing = latestResults.get(step.taskId);
+      if (!existing || timestamp >= existing.updatedAt) {
+        latestResults.set(step.taskId, { updatedAt: timestamp, result: step.result });
+      }
+    }
+
+    for (const [taskId, snapshot] of latestResults.entries()) {
+      taskResults.set(taskId, snapshot.result);
+    }
+
+    const globalContext = this.buildGlobalContext(job);
+    const llmExecuteTool = new LlmExecuteTool();
+    const overrideProvider = params?.provider;
+    const overrideModel = params?.model;
+
+    try {
+      for (const target of inferenceTargets) {
+        const task = job.sub_tasks.find((t) => t.id === target.taskId);
+        if (!task) {
+          throw new ValidationError(
+            `No task definition found for sub-step ${target.taskId}.`,
+            'taskId',
+            target.taskId
+          );
+        }
+
+        const now = new Date();
+        const pendingSubStepId = generateSubStepId();
+        const pendingParams = {
+          ...(target.toolOrPromptParams || {}),
+          ...(overrideProvider && overrideModel ? { provider: overrideProvider, model: overrideModel } : {}),
+        };
+
+        await this.db.update(dagSubSteps)
+          .set({ status: 'deleted', updatedAt: now })
+          .where(eq(dagSubSteps.id, target.id));
+
+        await this.db.insert(dagSubSteps).values({
+          id: pendingSubStepId,
+          executionId: target.executionId,
+          taskId: target.taskId,
+          description: target.description,
+          thought: target.thought,
+          actionType: target.actionType,
+          toolOrPromptName: target.toolOrPromptName,
+          toolOrPromptParams: pendingParams,
+          dependencies: target.dependencies,
+          status: 'pending',
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        await this.db.update(dagSubSteps)
+          .set({ status: 'running', startedAt: now })
+          .where(eq(dagSubSteps.id, pendingSubStepId));
+
+        const fullPrompt = this.buildInferencePrompt(task, globalContext, taskResults);
+        const agent = await this.agentsService.resolve(target.toolOrPromptName);
+
+        if (!agent) {
+          throw new NotFoundError('Agent', target.toolOrPromptName);
+        }
+
+        const provider = overrideProvider || agent.provider;
+        const model = overrideModel || agent.model;
+
+        const execStart = Date.now();
+
+        try {
+          const result = await llmExecuteTool.execute({
+            provider,
+            model,
+            task: agent.systemPrompt,
+            prompt: fullPrompt,
+          }, {
+            logger: this.logger,
+            db: this.db,
+            runId: `redo-inference-${Date.now()}`,
+            executionId,
+            subStepId: pendingSubStepId,
+          });
+
+          await this.db.update(dagSubSteps)
+            .set({
+              status: 'completed',
+              result: result.content,
+              completedAt: new Date(),
+              durationMs: Date.now() - execStart,
+              usage: result.usage,
+              costUsd: result.costUsd?.toString(),
+              generationStats: result.generationStats,
+              updatedAt: new Date(),
+            })
+            .where(eq(dagSubSteps.id, pendingSubStepId));
+
+          taskResults.set(target.taskId, result.content);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          await this.db.update(dagSubSteps)
+            .set({
+              status: 'failed',
+              error: errorMessage,
+              completedAt: new Date(),
+              durationMs: Date.now() - execStart,
+              updatedAt: new Date(),
+            })
+            .where(eq(dagSubSteps.id, pendingSubStepId));
+          throw error;
+        }
+      }
+    } finally {
+      const refreshedSubSteps = await this.db.query.dagSubSteps.findMany({
+        where: eq(dagSubSteps.executionId, executionId),
+      });
+
+      const statusData = this.deriveExecutionStatus(refreshedSubSteps);
+      const totalUsage = this.aggregateUsage(refreshedSubSteps);
+      const totalCostUsd = this.aggregateCost(refreshedSubSteps);
+
+      await this.db.update(dagExecutions)
+        .set({
+          status: statusData.status,
+          completedTasks: statusData.completedTasks,
+          failedTasks: statusData.failedTasks,
+          waitingTasks: statusData.waitingTasks,
+          totalUsage,
+          totalCostUsd: totalCostUsd?.toString(),
+          updatedAt: new Date(),
+        })
+        .where(eq(dagExecutions.id, executionId));
+    }
+
+    return { id: executionId, rerunCount: inferenceTargets.length };
   }
 
   async get(id: string): Promise<DAG> {

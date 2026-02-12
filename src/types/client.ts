@@ -100,6 +100,10 @@ export interface DAGsService {
   resumeFromClarification(dagId: string, userResponse: string): Promise<DAGPlanningResult>;
   execute(dagId: string, options?: { provider?: string; model?: string }): Promise<{ id: string; status: string }>;
   resume(executionId: string): Promise<{ id: string; status: string; retryCount: number }>;
+  redoInference(
+    executionId: string,
+    params?: { provider?: 'openai' | 'openrouter' | 'ollama'; model?: string }
+  ): Promise<{ id: string; rerunCount: number }>;
   get(id: string): Promise<DAG>;
   list(filter?: DAGFilter): Promise<DAG[]>;
   listScheduled(): Promise<ScheduledDAGInfo[]>;

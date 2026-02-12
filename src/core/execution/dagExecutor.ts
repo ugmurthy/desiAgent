@@ -839,7 +839,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     const failed = subSteps.filter(s => s.status === 'failed').length;
     const running = subSteps.filter(s => s.status === 'running').length;
     const waiting = subSteps.filter(s => s.status === 'waiting').length;
-    const total = subSteps.length;
+    const total = subSteps.filter(s => s.status !== 'deleted').length;
 
     let status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'partial';
 
