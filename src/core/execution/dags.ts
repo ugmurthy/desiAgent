@@ -17,6 +17,8 @@ import { validateCronExpression } from '../../util/cron-validator.js';
 import {
   insertStopRequestForDag,
   insertStopRequestForExecution,
+  hasActiveStopRequestForDag,
+  markStopRequestHandledForDag,
 } from '../../db/stopRequestHelpers.js';
 import {
   extractCodeBlock,
@@ -108,7 +110,12 @@ export interface ValidationErrorResult {
   dagId: string;
 }
 
-export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult;
+export interface DAGFailedResult {
+  status: 'failed';
+  dagId: string;
+}
+
+export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult | DAGFailedResult;
 
 export interface DAGExecutionStartedResult {
   status: string
@@ -116,7 +123,7 @@ export interface DAGExecutionStartedResult {
   executionId: string;
 }
 
-export type CreateAndExecuteResult = ClarificationRequiredResult | ValidationErrorResult | DAGExecutionStartedResult;
+export type CreateAndExecuteResult = ClarificationRequiredResult | ValidationErrorResult | DAGFailedResult | DAGExecutionStartedResult;
 
 export interface ExecuteOptions {
   provider?: 'openai' | 'openrouter' | 'ollama';
@@ -277,17 +284,34 @@ export class DAGsService {
     while (attempt < maxAttempts) {
       attempt++;
       this.logger.info(`attempt number ${attempt}`)
-      //this.logger.info({ attempt, agentName, goalText: showGoalText }, 'Creating DAG with LLM inference');
-      //this.logger.info({ temperature,maxTokens, systemPromptPreview: systemPrompt.slice(0,80) }, 'System prompt preview');
-      const response = await activeLLMProvider.chat({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: currentGoalText },
-        ],
-        temperature,
-        maxTokens,
-        abortSignal: effectiveOptions.abortSignal,
-      });
+
+      // Check for stop signal before each LLM call
+      if (await hasActiveStopRequestForDag(this.db, dagId)) {
+        this.logger.info({ dagId }, 'Stop signal detected before LLM call during DAG creation');
+        await markStopRequestHandledForDag(this.db, dagId);
+        return { status: 'failed', dagId };
+      }
+
+      let response;
+      try {
+        response = await activeLLMProvider.chat({
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: currentGoalText },
+          ],
+          temperature,
+          maxTokens,
+          abortSignal: effectiveOptions.abortSignal,
+        });
+      } catch (llmError) {
+        // Handle abort errors gracefully
+        if (llmError instanceof Error && (llmError.name === 'AbortError' || effectiveOptions.abortSignal?.aborted)) {
+          this.logger.info({ dagId }, 'LLM call aborted during DAG creation — stop signal');
+          await markStopRequestHandledForDag(this.db, dagId);
+          return { status: 'failed', dagId };
+        }
+        throw llmError;
+      }
 
       const attemptUsage = response.usage;
       const attemptCost = (response as any).costUsd;
@@ -598,6 +622,14 @@ export class DAGsService {
           baseInsertData.planningTotalCostUsd = planningCostTotal.toString();
         }
         this.logger.info('Base insert data prepared');
+
+        // Check for stop signal before persisting the final DAG record
+        if (await hasActiveStopRequestForDag(this.db, dagId)) {
+          this.logger.info({ dagId }, 'Stop signal detected before persisting DAG record');
+          await markStopRequestHandledForDag(this.db, dagId);
+          return { status: 'failed', dagId };
+        }
+
         try {
           await this.db.insert(dags).values(baseInsertData);
         } catch (dbError) {
@@ -700,6 +732,13 @@ export class DAGsService {
 
         baseInsertData.planningTotalUsage = planningUsageTotal;
         baseInsertData.planningTotalCostUsd = planningCostTotal.toString();
+      }
+
+      // Check for stop signal before persisting the low-coverage DAG record
+      if (await hasActiveStopRequestForDag(this.db, dagId)) {
+        this.logger.info({ dagId }, 'Stop signal detected before persisting low-coverage DAG record');
+        await markStopRequestHandledForDag(this.db, dagId);
+        return { status: 'failed', dagId };
       }
 
       try {

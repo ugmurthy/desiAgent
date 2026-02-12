@@ -242,6 +242,7 @@ export type {
   ClarificationRequiredResult,
   DAGCreatedResult,
   ValidationErrorResult,
+  DAGFailedResult,
   ExecuteOptions,
   RunExperimentsInput,
   DagScheduler,

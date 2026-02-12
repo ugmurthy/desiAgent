@@ -58,7 +58,12 @@ export interface ValidationErrorResult {
   dagId: string;
 }
 
-export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult;
+export interface DAGFailedResult {
+  status: 'failed';
+  dagId: string;
+}
+
+export type DAGPlanningResult = ClarificationRequiredResult | DAGCreatedResult | ValidationErrorResult | DAGFailedResult;
 
 export interface DAGExecutionStartedResult {
   status: string;
@@ -66,7 +71,7 @@ export interface DAGExecutionStartedResult {
   executionId: string;
 }
 
-export type CreateAndExecuteResult = ClarificationRequiredResult | ValidationErrorResult | DAGExecutionStartedResult;
+export type CreateAndExecuteResult = ClarificationRequiredResult | ValidationErrorResult | DAGFailedResult | DAGExecutionStartedResult;
 
 /**
  * Scheduled DAG info
