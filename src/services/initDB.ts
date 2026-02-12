@@ -190,6 +190,7 @@ function generateAllSQL(): { sql: string; tableNames: string[] } {
     schema.dags,
     schema.dagExecutions,
     schema.dagSubSteps,
+    schema.dagStopRequests,
   ];
 
   const statements: string[] = [];
