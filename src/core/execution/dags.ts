@@ -206,7 +206,20 @@ export class DAGsService {
     const scheduleActive = inputScheduleActive ?? !!cronSchedule;
     const showGoalText = truncateForLog(goalText);
 
-    this.logger.info({ agentName, goalText: showGoalText }, 'Create DAG from goal');
+    // Create an internal AbortController and register it for stop-signal support
+    const internalController = new AbortController();
+    const dagId = generateDAGId();
+    this.activeControllers.set(dagId, internalController);
+
+    // Combine with any externally-provided abortSignal
+    const combinedSignal = options.abortSignal
+      ? AbortSignal.any([internalController.signal, options.abortSignal])
+      : internalController.signal;
+    // Override options.abortSignal with combined signal for downstream use
+    const effectiveOptions = { ...options, abortSignal: combinedSignal };
+
+    try {
+    this.logger.info({ agentName, goalText: showGoalText, dagId }, 'Create DAG from goal');
 
     if (cronSchedule) {
       const validation = validateCronExpression(cronSchedule);
@@ -273,7 +286,7 @@ export class DAGsService {
         ],
         temperature,
         maxTokens,
-        abortSignal: options.abortSignal,
+        abortSignal: effectiveOptions.abortSignal,
       });
 
       const attemptUsage = response.usage;
@@ -313,7 +326,6 @@ export class DAGsService {
         this.logger.error({ err: parseError, attempt, responsePreview: response.content.slice(0, 80) }, 'Failed to parse LLM response as JSON');
 
         if (attempt >= maxAttempts) {
-          const dagId = generateDAGId();
           const now = new Date();
           this.logger.info({ dagId }, 'DagID Generated for parse error');
 
@@ -377,7 +389,6 @@ export class DAGsService {
         this.logger.error({ errors: validatedResult.error.issues, attempt }, 'DAG validation failed');
 
         if (attempt >= maxAttempts) {
-          const dagId = generateDAGId();
           const now = new Date();
           this.logger.info({ dagId }, 'DagID Generated for schema validation error');
 
@@ -437,14 +448,13 @@ export class DAGsService {
       if (dag.clarification_needed) {
         this.logger.info({ clarificationQuery: dag.clarification_query }, 'Clarification required');
         
-        const dagId = generateDAGId();
         const now = new Date();
         this.logger.info({ dagId }, 'DagID Generated for clarification');
 
         const titleMasterPromise = this.generateTitleAsync(
           activeLLMProvider,
           goalText,
-          options.abortSignal
+          effectiveOptions.abortSignal
         );
 
         const baseInsertData = {
@@ -521,14 +531,13 @@ export class DAGsService {
       if (dag.validation.coverage === 'high') {
         dag = renumberSubTasks(dag);
         dag.original_request = goalText;
-        const dagId = generateDAGId();
         const now = new Date();
         this.logger.info({dagId},"DagID Generated")
         // Run TitleMaster generation in parallel with preparing insert data
         const titleMasterPromise = this.generateTitleAsync(
           activeLLMProvider,
           goalText,
-          options.abortSignal
+          effectiveOptions.abortSignal
         );
         
         // Prepare base insert data (doesn't need title yet)
@@ -630,14 +639,13 @@ export class DAGsService {
 
       dag = renumberSubTasks(dag);
       dag.original_request = goalText;
-      const dagId = generateDAGId();
       const now = new Date();
       this.logger.info({ dagId }, 'DagID Generated for low-coverage DAG');
 
       const titleMasterPromise = this.generateTitleAsync(
         activeLLMProvider,
         goalText,
-        options.abortSignal
+        effectiveOptions.abortSignal
       );
 
       const baseInsertData = {
@@ -707,6 +715,10 @@ export class DAGsService {
     }
 
     throw new ValidationError(`Failed to create DAG after ${maxAttempts} attempts`, 'attempts', maxAttempts);
+    } finally {
+      // Always clean up the controller from the registry
+      this.activeControllers.delete(dagId);
+    }
   }
 
   async createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<CreateAndExecuteResult> {
