@@ -73,6 +73,16 @@ CREATE TABLE IF NOT EXISTS dag_sub_steps (
   content TEXT NOT NULL,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
+
+-- DAG Stop Requests table
+CREATE TABLE IF NOT EXISTS dag_stop_requests (
+  id TEXT PRIMARY KEY,
+  dag_id TEXT,
+  execution_id TEXT,
+  status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested', 'handled')),
+  requested_at INTEGER NOT NULL,
+  handled_at INTEGER
+);
 `;
 
 /**

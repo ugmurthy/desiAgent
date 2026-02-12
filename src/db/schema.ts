@@ -180,6 +180,18 @@ export const dagSubSteps = sqliteTable('sub_steps', {
 });
 
 /**
+ * DAG Stop Requests table - persistent stop/abort requests for DAG creation or execution
+ */
+export const dagStopRequests = sqliteTable('dag_stop_requests', {
+  id: text('id').primaryKey(),
+  dagId: text('dag_id'),
+  executionId: text('execution_id'),
+  status: text('status', { enum: ['requested', 'handled'] }).notNull().default('requested'),
+  requestedAt: integer('requested_at').notNull(),
+  handledAt: integer('handled_at'),
+});
+
+/**
  * Executions view - joins dagExecutions with dags to get dagTitle
  */
 export const executions = sqliteView('executions', {
@@ -223,6 +235,8 @@ export type DagExecution = typeof dagExecutions.$inferSelect;
 export type NewDagExecution = typeof dagExecutions.$inferInsert;
 export type DagSubStep = typeof dagSubSteps.$inferSelect;
 export type NewDagSubStep = typeof dagSubSteps.$inferInsert;
+export type DagStopRequest = typeof dagStopRequests.$inferSelect;
+export type NewDagStopRequest = typeof dagStopRequests.$inferInsert;
 export type Execution = {
   dagTitle: string | null;
   id: string | null;

@@ -1,0 +1,154 @@
+{
+  "project": "desiAgent",
+  "branchName": "ralph/stop-signal",
+  "description": "Stop Signal for DAG Creation & Execution - Allow external consumers to request graceful abort of DAG creation or pause of DAG execution via DB-backed stop requests and AbortController registry",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add dagStopRequests table to DB schema",
+      "description": "As a developer, I need a persistent table to store stop requests so they survive across processes and can be queried by dagId or executionId.",
+      "acceptanceCriteria": [
+        "New `dagStopRequests` table added to `src/db/schema.ts` with columns: `id` (text, PK), `dagId` (text, nullable), `executionId` (text, nullable), `status` (text, enum `requested` | `handled`), `requestedAt` (integer, timestamp), `handledAt` (integer, timestamp, nullable)",
+        "Drizzle type exports added: `DagStopRequest`, `NewDagStopRequest`",
+        "DB migration generated and applies cleanly",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Add stop-request helper functions",
+      "description": "As a developer, I need helper functions to create, query, and mark-as-handled stop requests so the service layer has a clean data-access API.",
+      "acceptanceCriteria": [
+        "Helper to insert a stop request for a given `dagId` (sets `status: 'requested'`, `requestedAt: now`)",
+        "Helper to insert a stop request for a given `executionId`",
+        "Helper to check if an active (`status: 'requested'`) stop request exists for a `dagId`",
+        "Helper to check if an active stop request exists for an `executionId`",
+        "Helper to mark a stop request as `handled` (sets `status: 'handled'`, `handledAt: now`)",
+        "All helpers accept a `DrizzleDB` instance as parameter (no singletons)",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Public service methods to request stop",
+      "description": "As a consumer importing desiAgent, I want to call requestStopForDag(dagId) or requestStopForExecution(executionId) to record a stop request without directly touching the DB.",
+      "acceptanceCriteria": [
+        "`DAGsService` exposes `async requestStopForDag(dagId: string): Promise<void>`",
+        "`DAGsService` exposes `async requestStopForExecution(executionId: string): Promise<void>`",
+        "Both methods insert a row into `dagStopRequests` via the helpers from US-002",
+        "Methods are public and available when desiAgent is imported as a package",
+        "Calling stop for a non-existent dagId/executionId does NOT throw (idempotent insert)",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "AbortController registry in DAGsService",
+      "description": "As a developer, I need a centralized in-memory registry of AbortController instances keyed by dagId and executionId so that stop-request methods can immediately abort in-flight LLM calls.",
+      "acceptanceCriteria": [
+        "`DAGsService` has a private `Map<string, AbortController>` (e.g., `activeControllers`) to track in-flight creation and execution controllers",
+        "`requestStopForDag(dagId)` triggers `.abort()` on the controller associated with the active createFromGoal call for that DAG",
+        "`requestStopForExecution(executionId)` triggers `.abort()` on the controller associated with the active execute call for that execution",
+        "Registry entries are always cleaned up (no leaks) — map size returns to pre-call value after any creation/execution completes",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Wire AbortController into createFromGoal",
+      "description": "As a developer, I need createFromGoal to create an AbortController, register it, and pass its signal to LLM calls so stop requests can immediately cancel in-flight HTTP requests.",
+      "acceptanceCriteria": [
+        "`createFromGoal` creates an `AbortController` at the start and registers it under the DAG's `id` in the activeControllers map",
+        "The controller's `signal` is passed as `abortSignal` to all LLM calls within `createFromGoal`",
+        "If the caller passes an external `abortSignal` in options, both the external signal and the internal controller's signal are respected (either triggers abort) using a combined/linked signal approach",
+        "Controller is removed from registry on completion, failure, or abort",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Wire AbortController into DAGExecutor.execute",
+      "description": "As a developer, I need DAGExecutor.execute to create an AbortController, register it, and pass its signal to LLM calls so stop requests can immediately cancel in-flight HTTP requests during execution.",
+      "acceptanceCriteria": [
+        "`DAGExecutor.execute` (or the path that instantiates it) creates an `AbortController` at the start and registers it under the `executionId` in the activeControllers map",
+        "The controller's `signal` is passed through `ExecutionConfig.abortSignal` to all task/synthesis LLM calls",
+        "If the caller passes an external `abortSignal` in options, both signals are respected (either triggers abort) using a combined/linked signal approach",
+        "Controller is removed from registry on completion, failure, or abort",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Stop check during DAG creation",
+      "description": "As a consumer, when I request a stop for a DAG being created via createFromGoal, the creation should abort, delete the partially-created DAG record, and return status: 'failed'.",
+      "acceptanceCriteria": [
+        "Stop signal checked before each LLM call inside the `createFromGoal` retry loop",
+        "Stop signal checked before persisting the final DAG record",
+        "If stop detected and a DAG record was already inserted in this attempt, that record is deleted",
+        "Method returns a result with `status: 'failed'` (reuses existing `DAGPlanningResult` union — no new type)",
+        "Stop request marked as `handled` after abort",
+        "When an LLM call is aborted, the resulting error is caught gracefully (not re-thrown as unhandled) and the stop-handling logic applies",
+        "A log entry is emitted at `info` level with `dagId` explaining the stop",
+        "Existing `createFromGoal` behavior is unchanged when no stop is requested",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Stop check during DAG execution",
+      "description": "As a consumer, when I request a stop for a running execution, the executor should pause gracefully, setting the execution and any in-flight sub-steps to pending.",
+      "acceptanceCriteria": [
+        "Stop signal checked before starting each task in `DAGExecutor.execute`",
+        "Stop signal checked after each task completes",
+        "If stop detected: `dagExecutions.status` set to `pending`",
+        "If stop detected: any sub-steps with `status: 'running'` or `status: 'pending'` remain/reset to `pending`",
+        "Already `completed` or `failed` sub-steps are NOT modified",
+        "Execution returns without throwing (graceful exit)",
+        "When an LLM call is aborted, the resulting error is caught gracefully and the stop-handling logic applies",
+        "Stop request marked as `handled`",
+        "A log entry is emitted at `info` level with `executionId` explaining the stop",
+        "Existing execution behavior is unchanged when no stop is requested",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Observability logging for stop events",
+      "description": "As an operator, I want clear log entries when a stop signal is detected so I can understand why a creation or execution ended early.",
+      "acceptanceCriteria": [
+        "Log at `info` level when a stop request is recorded (with `dagId` or `executionId`)",
+        "Log at `info` level when a stop is detected and acted upon during creation (with `dagId`)",
+        "Log at `info` level when a stop is detected and acted upon during execution (with `executionId`)",
+        "Logs use the existing `getLogger()` utility",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
