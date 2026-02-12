@@ -1,3 +1,92 @@
 ## Codebase Patterns
+- Use `DrizzleDB` type from `src/db/client.ts` for all DB-accepting functions (no singletons)
+- All tables defined in `src/db/schema.ts` with Drizzle ORM, raw SQL mirror in `src/db/client.ts` CREATE_TABLES_SQL
+- DAGsService is the main orchestrator; DAGExecutor handles task-level execution
+- `getLogger()` from `src/util/logger.ts` (pino) for all logging
+- `AbortSignal.any()` for combining multiple abort signals (Bun runtime supports this)
+- `noUnusedLocals: true` in tsconfig — don't import things you don't use yet
+- Type exports go in both `src/db/schema.ts` (Drizzle types) and `src/types/client.ts` (public API types)
+- Always export new public types from `src/index.ts`
+- DAG execution runs fire-and-forget via `.catch().finally()` pattern in DAGsService.execute
+---
 
+## 2026-02-12 - US-001
+Thread: https://ampcode.com/threads/T-019c50d1-2e3a-7027-a836-435a089ea104
+- Added `dagStopRequests` table to `src/db/schema.ts` with id, dagId, executionId, status, requestedAt, handledAt
+- Added CREATE TABLE SQL to `src/db/client.ts`
+- Exported `DagStopRequest` and `NewDagStopRequest` types
+- Files changed: `src/db/schema.ts`, `src/db/client.ts`
+- **Learnings for future iterations:**
+  - Schema table definitions must be mirrored in both Drizzle schema and raw SQL in client.ts
+---
+
+## 2026-02-12 - US-002
+Thread: https://ampcode.com/threads/T-019c50d1-2e3a-7027-a836-435a089ea104
+- Created `src/db/stopRequestHelpers.ts` with 6 helpers: insert, check, mark-handled for both dagId and executionId
+- All helpers accept DrizzleDB instance (no singletons)
+- Files changed: `src/db/stopRequestHelpers.ts`
+---
+
+## 2026-02-12 - US-003
+Thread: https://ampcode.com/threads/T-019c50d1-2e3a-7027-a836-435a089ea104
+- Added `requestStopForDag` and `requestStopForExecution` public methods to DAGsService
+- Idempotent insert — doesn't throw for non-existent IDs
+- Files changed: `src/core/execution/dags.ts`
+---
+
+## 2026-02-12 - US-004
+Thread: https://ampcode.com/threads/T-019c50d1-2e3a-7027-a836-435a089ea104
+- Added `activeControllers: Map<string, AbortController>` to DAGsService
+- `requestStopForDag`/`requestStopForExecution` now also abort the associated controller
+- Files changed: `src/core/execution/dags.ts`
+---
+
+## 2026-02-12 - US-005
+Thread: https://ampcode.com/threads/T-019c50d1-2e3a-7027-a836-435a089ea104
+- `createFromGoal` now creates AbortController, registers under dagId, combines with external signal
+- dagId is generated upfront and reused throughout all branches (removes duplicate generateDAGId calls)
+- Controller cleaned up in `finally` block
+- Files changed: `src/core/execution/dags.ts`
+- **Learnings for future iterations:**
+  - dagId was generated at 5+ different places inside createFromGoal; consolidating to one upfront generation simplifies the code
+  - `AbortSignal.any()` works well for combining signals
+---
+
+## 2026-02-12 - US-006
+Thread: https://ampcode.com/threads/T-019c50d1-2e3a-7027-a836-435a089ea104
+- `DAGsService.execute` and `resume` now create AbortController, register under executionId
+- Combined signal passed via ExecutionConfig.abortSignal
+- Controller cleaned up via `.finally()` on the fire-and-forget promise
+- Files changed: `src/core/execution/dags.ts`
+---
+
+## 2026-02-12 - US-007
+Thread: https://ampcode.com/threads/T-019c50d1-2e3a-7027-a836-435a089ea104
+- Stop signal checked before each LLM call in createFromGoal retry loop
+- Stop signal checked before persisting final DAG record (both high-coverage and low-coverage paths)
+- Abort errors caught gracefully — returns `{ status: 'failed', dagId }`
+- Added `DAGFailedResult` type to both dags.ts and client.ts, updated unions
+- Files changed: `src/core/execution/dags.ts`, `src/types/client.ts`, `src/index.ts`
+- **Learnings for future iterations:**
+  - When adding a new result variant to DAGPlanningResult, must update it in BOTH `src/core/execution/dags.ts` AND `src/types/client.ts`
+  - Also update `CreateAndExecuteResult` union if it uses the same base types
+---
+
+## 2026-02-12 - US-008
+Thread: https://ampcode.com/threads/T-019c50d1-2e3a-7027-a836-435a089ea104
+- Stop signal checked before starting each wave and after each wave completes
+- Abort errors in tasks handled gracefully — reset to pending, don't throw
+- Outer catch in execute also handles abort → sets status to pending
+- `handleStopDuringExecution` helper: sets execution to pending, resets running steps, marks stop handled
+- Files changed: `src/core/execution/dagExecutor.ts`
+---
+
+## 2026-02-12 - US-009
+Thread: https://ampcode.com/threads/T-019c50d1-2e3a-7027-a836-435a089ea104
+- All required log entries already present from US-003, US-007, US-008
+- Stop request recorded: logged in requestStopForDag/requestStopForExecution with dagId/executionId
+- Stop detected during creation: logged at multiple check points with dagId
+- Stop detected during execution: logged at wave boundaries and abort catch with executionId
+- All use getLogger() via this.logger
+- No additional code changes needed
 ---
