@@ -200,6 +200,22 @@ for await (const event of client.executions.streamEvents(id)) {
 }
 ```
 
+## CLI
+
+The `desi` CLI ships with the standalone `desiCLI` package. Command groups support default subcommands for convenience:
+
+```bash
+# Artifacts
+desi artifacts              # Same as: desi artifacts list
+desi artifacts report.json  # Same as: desi artifacts get report.json
+
+# Agents
+desi agents                 # Same as: desi agents list
+
+# Results
+desi results exec_123       # Same as: desi results view exec_123
+```
+
 ## Examples
 
 ### News Bulletin Generator

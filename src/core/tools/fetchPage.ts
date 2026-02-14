@@ -62,6 +62,8 @@ export class FetchPageTool extends BaseTool<any, FetchPageOutput> {
         const response = await fetch(input.url, {
           signal: controller.signal,
           headers: {
+            Accept:
+              'text/markdown, text/plan, text/html, application/json, application/pdf, text/yaml',
             'User-Agent':
               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           },

@@ -1,6 +1,6 @@
 {
   "name": "@ugm/desiagent",
-  "version": "0.1.32",
+  "version": "0.1.34",
   "description": "A library-first async agent system for building autonomous workflows",
   "homepage": "https://github.com/ugmurthy/desiAgent",
   "main": "./dist/index.js",
@@ -35,11 +35,18 @@
     "test:abort:ollama": "bun run scripts/test-ollama-abort.ts"
   },
   "keywords": [
-    "agent",
-    "async",
-    "workflow",
-    "automation",
+    "desiagent",
+    "agent-sdk",
+    "ai-agents",
     "llm",
+    "orchestration",
+    "workflow",
+    "dag",
+    "execution",
+    "cost-tracking",
+    "openai",
+    "local-sdk",
+    "typescript",
     "bun"
   ],
   "author": "U G Murthy <ugmurthy@gmail.com>",

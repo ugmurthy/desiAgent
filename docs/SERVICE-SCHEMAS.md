@@ -1,6 +1,6 @@
 # desiAgent Service Schemas
 
-This document describes the input and output schemas for each service in desiAgent.
+This document reflects the current `src/core` services and types.
 
 ## Table of Contents
 
@@ -11,31 +11,30 @@ This document describes the input and output schemas for each service in desiAge
 - [ArtifactsService](#artifactsservice)
 - [CostsService](#costsservice)
 - [LLM Provider](#llm-provider)
+- [Core Types](#core-types)
 
 ---
 
 ## AgentsService
 
-Manages AI agents with their configurations and capabilities.
-
 ### `create(name, version, systemPrompt, params?)`
 
-**Input:**
+**Input**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | `string` | ✓ | Agent name |
 | `version` | `string` | ✓ | Semantic version |
 | `systemPrompt` | `string` | ✓ | System prompt for the agent |
-| `params` | `Record<string, any>` | | Additional parameters |
+| `params` | `Record<string, any>` | | Additional parameters (`provider`, `model`, `metadata`) |
 
 **Output:** [`Agent`](#agent)
 
 ### `list(filter?)`
 
-**Input:**
+**Input**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `filter` | `Record<string, any>` | | Filter criteria |
+| `filter` | `Record<string, any>` | | `name`, `active` |
 
 **Output:** `Agent[]`
 
@@ -47,7 +46,7 @@ Manages AI agents with their configurations and capabilities.
 
 ### `update(id, updates)`
 
-**Input:**
+**Input**
 | Parameter | Type | Required |
 |-----------|------|----------|
 | `id` | `string` | ✓ |
@@ -77,31 +76,30 @@ Manages AI agents with their configurations and capabilities.
 
 ## DAGsService
 
-Manages DAG (Directed Acyclic Graph) workflows from goals.
-
 ### `createFromGoal(options)`
 
 **Input:** [`CreateDAGFromGoalOptions`](#createdagfromgoaloptions)
 
 ```typescript
 interface CreateDAGFromGoalOptions {
-  goalText: string;               // The goal/objective to decompose
-  agentName: string;              // Agent to use for planning
+  goalText: string;
+  agentName: string;
   provider?: 'openai' | 'openrouter' | 'ollama';
   model?: string;
   temperature?: number;
   maxTokens?: number;
   seed?: number;
-  cronSchedule?: string;          // Cron expression for scheduling
+  cronSchedule?: string;
   scheduleActive?: boolean;
   timezone?: string;
+  abortSignal?: AbortSignal;
 }
 ```
 
 **Output:** [`DAGPlanningResult`](#dagplanningresult)
 
 ```typescript
-type DAGPlanningResult = 
+type DAGPlanningResult =
   | { status: 'success'; dagId: string }
   | { status: 'clarification_required'; dagId: string; clarificationQuery: string }
   | { status: 'validation_error'; dagId: string };
@@ -111,14 +109,14 @@ type DAGPlanningResult =
 
 **Input:** [`CreateDAGFromGoalOptions`](#createdagfromgoaloptions)
 
-**Output:**
+**Output**
 ```typescript
-{ dagId: string; executionId: string }
+{ status: string; dagId: string; executionId: string }
 ```
 
 ### `resumeFromClarification(dagId, userResponse)`
 
-**Input:**
+**Input**
 | Parameter | Type | Required |
 |-----------|------|----------|
 | `dagId` | `string` | ✓ |
@@ -128,32 +126,27 @@ type DAGPlanningResult =
 
 ### `execute(dagId, options?)`
 
-**Input:**
+**Input**
 | Parameter | Type | Required |
 |-----------|------|----------|
 | `dagId` | `string` | ✓ |
 | `options.provider` | `string` | |
 | `options.model` | `string` | |
+| `options.executionConfig` | `ExecutionConfig` | |
 
 **Output:** `{ id: string; status: string }`
 
-### `executeDefinition(options)`
+### `resume(executionId, executionConfig?)`
 
-**Input:**
-```typescript
-{
-  definition: DecomposerJob;
-  originalGoalText: string;
-}
-```
-
-**Output:** `{ id: string; status: string }`
-
-### `resume(executionId)`
-
-**Input:** `executionId: string`
+**Input:** `executionId: string`, `executionConfig?: ExecutionConfig`
 
 **Output:** `{ id: string; status: string; retryCount: number }`
+
+### `redoInference(executionId, params?)`
+
+**Input:** `executionId: string`, `params?: { provider?: 'openai' | 'openrouter' | 'ollama'; model?: string }`
+
+**Output:** `{ id: string; rerunCount: number }`
 
 ### `get(id)`
 
@@ -193,7 +186,7 @@ interface ScheduledDAGInfo {
 
 ### `update(id, updates)`
 
-**Input:**
+**Input**
 ```typescript
 {
   id: string;
@@ -232,7 +225,7 @@ interface RunExperimentsInput {
 }
 ```
 
-**Output:**
+**Output**
 ```typescript
 {
   status: string;
@@ -259,11 +252,9 @@ interface RunExperimentsInput {
 
 ## ExecutionsService
 
-Manages DAG execution lifecycle and monitoring.
-
 ### `list(filter?)`
 
-**Input:**
+**Input**
 ```typescript
 {
   dagId?: string;
@@ -295,7 +286,7 @@ interface DAGExecutionWithSteps extends DAGExecution {
 
 ### `listForDag(dagId, opts?)`
 
-**Input:**
+**Input**
 | Parameter | Type | Required |
 |-----------|------|----------|
 | `dagId` | `string` | ✓ |
@@ -336,8 +327,6 @@ interface DagExecutionListResult {
 
 ## ToolsService
 
-Lists available tools for agent use.
-
 ### `list(filter?)`
 
 **Input:** `filter?: Record<string, any>`
@@ -348,11 +337,9 @@ Lists available tools for agent use.
 
 ## ArtifactsService
 
-Manages file artifacts produced during execution.
-
 ### `list()`
 
-**Output:** `string[]` (list of filenames)
+**Output:** `string[]`
 
 ### `get(filename)`
 
@@ -364,46 +351,11 @@ Manages file artifacts produced during execution.
 
 ## CostsService
 
-Tracks LLM usage and costs.
-
 ### `getExecutionCosts(executionId)`
 
 **Input:** `executionId: string`
 
 **Output:** [`ExecutionCostBreakdown`](#executioncostbreakdown)
-
-```typescript
-interface ExecutionCostBreakdown {
-  dagId: string | null;
-  executionId: string;
-  planning: {
-    totalUsage: PlanningUsageTotal | null;
-    totalCostUsd: string | null;
-    attempts: PlanningAttempt[] | null;
-  } | null;
-  execution: {
-    totalUsage: UsageInfo | null;
-    totalCostUsd: string | null;
-    subSteps: Array<{
-      id: string;
-      taskId: string;
-      actionType: string;
-      toolOrPromptName: string;
-      usage: UsageInfo | null;
-      costUsd: string | null;
-    }>;
-    synthesis: {
-      usage: UsageInfo | null;
-      costUsd: string | null;
-    } | null;
-  };
-  totals: {
-    planningCostUsd: string;
-    executionCostUsd: string;
-    grandTotalCostUsd: string;
-  };
-}
-```
 
 ### `getDagCosts(dagId)`
 
@@ -411,133 +363,25 @@ interface ExecutionCostBreakdown {
 
 **Output:** [`DagCostBreakdown`](#dagcostbreakdown)
 
-```typescript
-interface DagCostBreakdown {
-  dagId: string;
-  planning: {
-    totalUsage: PlanningUsageTotal | null;
-    totalCostUsd: string | null;
-    attempts: PlanningAttempt[] | null;
-  };
-  executions: Array<{
-    executionId: string;
-    status: string;
-    totalCostUsd: string | null;
-    startedAt: Date | null;
-    completedAt: Date | null;
-  }>;
-  totals: {
-    planningCostUsd: string;
-    executionsCostUsd: string;
-    grandTotalCostUsd: string;
-  };
-}
-```
-
 ### `getCostSummary(opts?)`
 
 **Input:** [`CostSummaryOptions`](#costsummaryoptions)
-
-```typescript
-interface CostSummaryOptions {
-  from?: Date;
-  to?: Date;
-  groupBy?: 'day' | 'week' | 'month';
-}
-```
-
-**Output:** [`CostSummaryResult`](#costsummaryresult)
-
-```typescript
-interface CostSummaryResult {
-  dateRange: {
-    from: string;
-    to: string;
-    groupBy: string;
-  };
-  summary: Array<{
-    date: string;
-    planningCostUsd: string;
-    executionCostUsd: string;
-    totalCostUsd: string;
-  }>;
-  totals: {
-    planningCostUsd: string;
-    executionCostUsd: string;
-    totalCostUsd: string;
-  };
-}
-```
 
 ---
 
 ## LLM Provider
 
-Interface for LLM backends (OpenAI, OpenRouter, Ollama).
-
 ### `chat(params)`
 
 **Input:** [`ChatParams`](#chatparams)
-
-```typescript
-interface ChatParams {
-  messages: Message[];
-  temperature?: number;
-  maxTokens?: number;
-}
-
-interface Message {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-```
-
-**Output:** [`ChatResponse`](#chatresponse)
-
-```typescript
-interface ChatResponse {
-  content: string;
-  usage?: UsageInfo;
-  costUsd?: number;
-  generationStats?: Record<string, any>;
-}
-```
 
 ### `callWithTools(params)`
 
 **Input:** [`LLMCallParams`](#llmcallparams)
 
-```typescript
-interface LLMCallParams {
-  messages: Message[];
-  tools: ToolDefinition[];
-  temperature?: number;
-  maxTokens?: number;
-}
-```
-
-**Output:** [`LLMResponse`](#llmresponse)
-
-```typescript
-interface LLMResponse {
-  thought: string;
-  toolCalls?: ToolCall[];
-  finishReason: 'stop' | 'tool_calls' | 'length' | 'content_filter' | 'error';
-  usage?: UsageInfo;
-  costUsd?: number;
-  generationStats?: Record<string, any>;
-}
-
-interface ToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, any>;
-}
-```
-
 ---
 
-## Core Type Definitions
+## Core Types
 
 ### Agent
 
@@ -560,12 +404,12 @@ interface Agent {
 
 interface AgentConstraints {
   maxTokens?: number;
-  temperature?: number;           // 0-2
-  topP?: number;                  // 0-1
-  frequencyPenalty?: number;      // -2 to 2
-  presencePenalty?: number;       // -2 to 2
+  temperature?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
   maxSteps?: number;
-  timeout?: number;               // milliseconds
+  timeout?: number;
 }
 ```
 
@@ -574,27 +418,10 @@ interface AgentConstraints {
 ```typescript
 interface DAG {
   id: string;
-  objective: string;
-  nodes: DAGNode[];
-  edges: DAGEdge[];
+  dagTitle: string;
   status: ExecutionStatus;
   createdAt: Date;
   updatedAt: Date;
-  metadata?: Record<string, any>;
-}
-
-interface DAGNode {
-  id: string;
-  label: string;
-  description: string;
-  agentId?: string;
-  type: 'task' | 'decision' | 'parallel' | 'sequential';
-}
-
-interface DAGEdge {
-  from: string;
-  to: string;
-  condition?: string;
   metadata?: Record<string, any>;
 }
 ```
@@ -631,9 +458,14 @@ interface DAGExecution {
   updatedAt: Date;
 }
 
-type DAGExecutionStatus = 
-  | 'pending' | 'running' | 'waiting' 
-  | 'completed' | 'failed' | 'partial' | 'suspended';
+type DAGExecutionStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | 'partial'
+  | 'suspended';
 ```
 
 ### SubStep
@@ -666,7 +498,43 @@ interface SubStep {
   updatedAt: Date;
 }
 
-type SubStepStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed';
+type SubStepStatus =
+  | 'pending'
+  | 'running'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | 'deleted';
+```
+
+### ExecutionEvent
+
+```typescript
+interface ExecutionEvent {
+  type: ExecutionEventType;
+  executionId: string;
+  ts: number;
+  data?: Record<string, any>;
+  error?: {
+    message: string;
+    code?: string;
+  };
+}
+
+enum ExecutionEventType {
+  Started = 'execution:started',
+  Completed = 'execution:completed',
+  Failed = 'execution:failed',
+  Suspended = 'execution:suspended',
+  WaveStarted = 'execution:wave_started',
+  WaveCompleted = 'execution:wave_completed',
+  TaskStarted = 'execution:task_started',
+  TaskProgress = 'execution:task_progress',
+  TaskCompleted = 'execution:task_completed',
+  TaskFailed = 'execution:task_failed',
+  SynthesisStarted = 'execution:synthesis_started',
+  SynthesisCompleted = 'execution:synthesis_completed'
+}
 ```
 
 ### ToolDefinition
@@ -677,90 +545,77 @@ interface ToolDefinition {
   function: {
     name: string;
     description: string;
-    parameters: Record<string, any>;  // JSON Schema
+    parameters: Record<string, any>;
   };
 }
 ```
 
-### DecomposerJob
-
-The internal schema for decomposed task planning:
+### CreateDAGFromGoalOptions
 
 ```typescript
-interface DecomposerJob {
-  original_request: string;
-  intent: {
-    primary: string;
-    sub_intents: string[];
-  };
-  entities: Array<{
-    entity: string;
-    type: string;
-    grounded_value: string;
-  }>;
-  sub_tasks: SubTask[];
-  synthesis_plan: string;
-  validation: {
-    coverage: string;
-    gaps: string[];
-    iteration_triggers: string[];
-  };
-  clarification_needed: boolean;
-  clarification_query?: string;  // Required when clarification_needed is true
-}
-
-interface SubTask {
-  id: string;
-  description: string;
-  thought: string;
-  action_type: 'tool' | 'inference';
-  tool_or_prompt: {
-    name: string;
-    params?: Record<string, any>;
-  };
-  expected_output: string;
-  dependencies: string[];
+interface CreateDAGFromGoalOptions {
+  goalText: string;
+  agentName: string;
+  provider?: 'openai' | 'openrouter' | 'ollama';
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  seed?: number;
+  cronSchedule?: string;
+  scheduleActive?: boolean;
+  timezone?: string;
+  abortSignal?: AbortSignal;
 }
 ```
 
-### ExecutionEvent
-
-For streaming execution updates:
+### RunExperimentsInput
 
 ```typescript
-interface ExecutionEvent {
-  type: ExecutionEventType;
-  executionId: string;
-  timestamp: Date;
-  stepIndex?: number;
-  data?: Record<string, any>;
-  error?: {
-    message: string;
-    code?: string;
-  };
-}
-
-enum ExecutionEventType {
-  Started = 'execution:started',
-  StepCompleted = 'execution:step_completed',
-  StepFailed = 'execution:step_failed',
-  ToolCalled = 'execution:tool_called',
-  ToolCompleted = 'execution:tool_completed',
-  ToolFailed = 'execution:tool_failed',
-  Completed = 'execution:completed',
-  Failed = 'execution:failed',
-  Paused = 'execution:paused',
-  Resumed = 'execution:resumed',
+interface RunExperimentsInput {
+  goalText: string;
+  agentName: string;
+  provider: 'openai' | 'openrouter' | 'ollama';
+  models: string[];
+  temperatures: number[];
+  seed?: number;
 }
 ```
 
-### UsageInfo
+### ExecutionConfig
 
 ```typescript
-interface UsageInfo {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
+interface ExecutionConfig {
+  skipEvents?: boolean;
+  batchDbUpdates?: boolean;
+  abortSignal?: AbortSignal;
+}
+```
+
+### ChatParams
+
+```typescript
+interface ChatParams {
+  messages: Message[];
+  temperature?: number;
+  maxTokens?: number;
+  abortSignal?: AbortSignal;
+}
+
+interface Message {
+  role: 'system' | 'user' | 'assistant';
+  content: string | Array<{ type: 'text' | 'image_url'; text?: string; image_url?: { url: string; detail?: 'auto' | 'low' | 'high' } }>;
+}
+```
+
+### LLMCallParams
+
+```typescript
+interface LLMCallParams {
+  messages: Message[];
+  tools: ToolDefinition[];
+  temperature?: number;
+  maxTokens?: number;
+  abortSignal?: AbortSignal;
 }
 ```
 
@@ -777,7 +632,7 @@ enum ExecutionStatus {
   Paused = 'paused',
   Completed = 'completed',
   Failed = 'failed',
-  Cancelled = 'cancelled',
+  Cancelled = 'cancelled'
 }
 ```
 
