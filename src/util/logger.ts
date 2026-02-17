@@ -120,7 +120,12 @@ export function initializeLogger(level?: LogLevel): Logger {
     };
   }
 
-  logger = pino(options);
+  const newLogger = pino(options);
+  if (logger) {
+    // Update existing instance's level so stale references also pick up the new level
+    logger.level = levelToUse;
+  }
+  logger = newLogger;
   return logger;
 }
 

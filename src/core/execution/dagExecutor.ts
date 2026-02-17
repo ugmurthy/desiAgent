@@ -216,7 +216,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     const tool = task.tool_or_prompt.name;
     const DEPENDENCY_PATTERN = /<Results? (?:from|of) Task (\d+)>/g;
     const matches = [...String(value).matchAll(DEPENDENCY_PATTERN)];
-
+    this.logger.info(`╰─dependency reference in: Task ${task.id} -tool: ${tool} key: ${key}`);
     if (tool === 'fetchURLs') {
       resolvedParams[key] = this.resolveFetchURLs(task, key, taskResults);
       
@@ -226,7 +226,11 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       if (Array.isArray(resolvedParams[key]) && resolvedParams[key].length > 0) {
         resolvedParams[key][0]['content'] = this.resolveEmailContent(task, taskResults);
       }
-    } else {
+    } else if (tool === 'sendEmail' && key === 'body') {
+      resolvedParams[key] = this.resolveEmailContent(task, taskResults);
+    }
+    
+    else {
       resolvedParams[key] = this.resolveStringReplacements(value, matches, key, taskResults);
     }
   }
@@ -238,6 +242,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     const contentArray: string[] = [];
     
     for (const deps of task.dependencies) {
+      this.logger.info(`╰─dependency reference in: Task ${deps} - EmailContent`);
       const depResult = taskResults.get(deps);
       
       if (typeof depResult === 'string') {
@@ -450,8 +455,9 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           fetchURLs: '🌐',
           readEmail: '📧',
           sendEmail: '✉️',
+          default:'🛠️'
         };
-        const displaySym = symbols[task.tool_or_prompt.name] || '⚙️';
+        const displaySym = symbols[task.tool_or_prompt.name] || symbols['default'];
         this.logger.info(`${displaySym} Executing sub-task ${task.id} ${task.description.slice(0, 50)}...`);
 
         // Skip individual DB update if batching enabled - will batch at wave end
