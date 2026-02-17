@@ -242,10 +242,21 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     const contentArray: string[] = [];
     
     for (const deps of task.dependencies) {
-      this.logger.info(`╰─dependency reference in: Task ${deps} - EmailContent`);
-      const depResult = taskResults.get(deps);
+
+      let depResult = taskResults.get(deps);
+
+      this.logger.info(`╰─dependency reference in: task ${deps} - EmailContent`);
+      this.logger.info(`  ╰─type of depResulr - ${typeof depResult}}`);
       
       if (typeof depResult === 'string') {
+        const lines = depResult.split('\n');
+        
+        if (lines.length > 1) {
+          this.logger.info(`  ╰─ is String line 2:${lines[1]} `);
+          if (lines[0].includes('```html')){
+            depResult = lines.slice(1, -1).join('\n');
+          }
+        }
         contentArray.push(depResult);
       } else if (typeof depResult === 'object' && depResult?.content) {
         contentArray.push(depResult.content);
