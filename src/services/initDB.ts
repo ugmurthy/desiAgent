@@ -4,24 +4,12 @@
  */
 
 import { Database } from 'bun:sqlite';
-import { existsSync, unlinkSync, readFileSync, mkdirSync } from 'fs';
+import { existsSync, unlinkSync, mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import type { SQLiteTable, SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import * as schema from '../db/schema.js';
-
-interface AgentSeedData {
-  id: string;
-  name: string;
-  version: string;
-  prompt_template: string;
-  provider: string | null;
-  model: string | null;
-  active: boolean;
-  metadata: Record<string, any>;
-  created_at: string;
-  updated_at: string;
-}
+import { agentsSeedData } from './agentsSeedData.js';
 
 export interface InitDBOptions {
   force?: boolean;
@@ -207,23 +195,14 @@ function generateAllSQL(): { sql: string; tableNames: string[] } {
   return { sql: statements.join('\n\n'), tableNames };
 }
 
-function seedAgents(sqlite: Database, seedPath?: string): number {
-  const defaultSeedPath = resolve(dirname(import.meta.dir), '../seed/agents.json');
-  const agentsFile = seedPath ?? defaultSeedPath;
-  
-  if (!existsSync(agentsFile)) {
-    return 0;
-  }
-
-  const agentsData: AgentSeedData[] = JSON.parse(readFileSync(agentsFile, 'utf-8'));
-  
+function seedAgents(sqlite: Database): number {
   const insertStmt = sqlite.prepare(`
     INSERT INTO agents (id, name, version, prompt_template, provider, model, active, metadata, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let count = 0;
-  for (const agent of agentsData) {
+  for (const agent of agentsSeedData) {
     insertStmt.run(
       agent.id,
       agent.name,

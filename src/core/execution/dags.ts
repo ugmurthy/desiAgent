@@ -974,12 +974,29 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       throw new NotFoundError('DAG Execution', executionId);
     }
 
-    if (!['suspended', 'failed'].includes(execution.status)) {
+    if (!['suspended', 'failed', 'running'].includes(execution.status)) {
       throw new ValidationError(
-        `Cannot resume execution with status '${execution.status}'. Only 'suspended' or 'failed' executions can be resumed.`,
+        `Cannot resume execution with status '${execution.status}'. Only 'suspended', 'failed', or stale 'running' executions can be resumed.`,
         'status',
         execution.status
       );
+    }
+
+    // For 'running' executions, only allow resume if they are stale (no recent update)
+    if (execution.status === 'running') {
+      const staleMinutes = parseInt(process.env.STALE_EXECUTION_MINUTES || '5', 10);
+      const staleThreshold = new Date(Date.now() - staleMinutes * 60 * 1000);
+      const lastActivity = execution.updatedAt || execution.startedAt;
+
+      if (lastActivity && new Date(lastActivity) > staleThreshold) {
+        throw new ValidationError(
+          `Cannot resume execution with status 'running'. Execution was updated ${Math.round((Date.now() - new Date(lastActivity).getTime()) / 1000)}s ago, which is within the ${staleMinutes}-minute staleness threshold. It may still be active.`,
+          'status',
+          execution.status
+        );
+      }
+
+      this.logger.warn({ executionId, staleMinutes, lastActivity }, 'Resuming stale running execution');
     }
 
     if (!execution.dagId) {
