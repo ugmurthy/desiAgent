@@ -1,278 +1,346 @@
 # desiAgent
 
-A library-first async agent system for building autonomous workflows with TypeScript.
+A library-first async agent system for building autonomous workflows with TypeScript. Give it a goal in plain English and it decomposes it into a DAG of tasks, executes them with built-in tools, and streams results back — all in a few lines of code.
 
 ## Features
 
-- **Multiple LLM Providers**: OpenAI, OpenRouter, and Ollama support
-- **Autonomous Execution**: Let agents execute objectives autonomously
-- **DAG Workflows**: Decompose complex objectives into directed acyclic graphs
-- **Built-in Tools**: Web scraping, file operations, bash commands, and more
-- **Event Streaming**: Track execution progress in real-time
-- **SQLite Storage**: Persistent storage using bun:sqlite
+- **Goal → DAG → Execution** — Describe what you want; desiAgent plans a directed acyclic graph (DAG) of sub-tasks and executes them autonomously.
+- **Multiple LLM Providers** — OpenAI, OpenRouter, and Ollama (local) out of the box.
+- **Built-in Tools** — Web scraping, file I/O, bash commands, email (SMTP/IMAP), PDF parsing, and more.
+- **Event Streaming** — `for await` over execution events to track progress in real-time.
+- **Clarification Flow** — If the goal is ambiguous the agent asks for clarification before proceeding.
+- **In-Memory or Persistent Storage** — Use `:memory:` for quick experiments or a SQLite file for production.
+- **Cron Scheduling** — Schedule DAGs to run on a cron expression with timezone support.
+- **Artifacts** — Tools can write output files (reports, code, images) that are automatically stored and retrievable.
+- **Cost Tracking** — Token usage and USD cost are recorded per execution step.
+- **Experiments API** — Compare models and temperatures on the same goal in one call.
 
 ## Installation
 
 ### Prerequisites
 
-- [Bun](https://bun.sh) 1.3.5 or higher
+- [Bun](https://bun.sh) ≥ 1.3.5
 
 ### Install
 
 ```bash
-bun add desiagent
+bun add @ugm/desiagent
 ```
 
-Or with npm/pnpm:
+Or with npm / pnpm:
 
 ```bash
-npm install desiagent
+npm install @ugm/desiagent
 # or
-pnpm add desiagent
+pnpm add @ugm/desiagent
 ```
 
-## Environment Variables
+### Environment Variables
 
-Create a `.env` file in your project root with the appropriate API keys for your chosen provider:
-
-### OpenAI
+Create a `.env` file with your provider's API key:
 
 ```bash
-OPENAI_API_KEY=sk-...
-```
-
-### OpenRouter
-
-```bash
+# OpenRouter (recommended — access to many models via one key)
 OPENROUTER_API_KEY=sk-or-...
-```
 
-### Ollama (Local)
+# OpenAI
+OPENAI_API_KEY=sk-...
 
-```bash
-OLLAMA_BASE_URL=http://localhost:11434  # Optional, this is the default
-```
-
-## Quick Start
-
-### Basic Example (OpenAI)
-
-```typescript
-import { setupDesiAgent } from 'desiagent';
-
-const client = await setupDesiAgent({
-  llmProvider: 'openai',
-  openaiApiKey: process.env.OPENAI_API_KEY,
-  modelName: 'gpt-4o',
-});
-
-// Create and execute a DAG
-const execution = await client.dags.createAndExecute('Summarize the latest tech news');
-console.log(`Execution: ${execution.id}, Status: ${execution.status}`);
-
-await client.shutdown();
-```
-
-### Using OpenRouter
-
-```typescript
-import { setupDesiAgent } from 'desiagent';
-
-const client = await setupDesiAgent({
-  llmProvider: 'openrouter',
-  openrouterApiKey: process.env.OPENROUTER_API_KEY,
-  modelName: 'google/gemini-2.5-flash-lite-preview-06-2025',
-});
-
-const execution = await client.dags.createAndExecute('Research best practices for API design');
-await client.shutdown();
-```
-
-### Using Ollama (Local LLM)
-
-```typescript
-import { setupDesiAgent } from 'desiagent';
-
-const client = await setupDesiAgent({
-  llmProvider: 'ollama',
-  ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-  modelName: 'llama3.2',
-});
-
-const execution = await client.dags.createAndExecute('Explain quantum computing in simple terms');
-await client.shutdown();
-```
-
-## Configuration Options
-
-```typescript
-interface DesiAgentConfig {
-  // LLM Provider (required)
-  llmProvider: 'openai' | 'openrouter' | 'ollama';
-  modelName: string;
-
-  // Provider-specific API keys
-  openaiApiKey?: string;      // Required for 'openai' provider
-  openrouterApiKey?: string;  // Required for 'openrouter' provider
-  ollamaBaseUrl?: string;     // Optional for 'ollama', defaults to http://localhost:11434
-
-  // Database (optional)
-  databasePath?: string;      // Default: ~/.desiAgent/data/agent.db
-
-  // Agent definitions (optional)
-  agentDefinitionsPath?: string;  // Default: ~/.desiAgent/agents
-
-  // Logging (optional)
-  logLevel?: 'debug' | 'info' | 'warn' | 'error';  // Default: 'info'
-
-  // Callbacks (optional)
-  onExecutionStart?: (executionId: string) => void;
-  onExecutionEnd?: (executionId: string, result: any) => void;
-}
-```
-
-## API Reference
-
-### Agents
-
-```typescript
-// Create a new agent
-const agent = await client.agents.create(name, version, prompt, params?);
-
-// List all agents
-const agents = await client.agents.list(filter?);
-
-// Get a specific agent
-const agent = await client.agents.get(id);
-
-// Update an agent
-await client.agents.update(id, updates);
-
-// Activate/Delete an agent
-await client.agents.activate(id);
-await client.agents.delete(id);
-
-// Resolve agent by name
-const agent = await client.agents.resolve(name);
-```
-
-### DAGs (Directed Acyclic Graphs)
-
-```typescript
-// Create a DAG from an objective
-const dag = await client.dags.create(objective, params?);
-
-// Create and immediately execute
-const execution = await client.dags.createAndExecute(objective, params?);
-
-// Execute an existing DAG
-const execution = await client.dags.execute(dagId, params?);
-
-// List DAGs
-const dags = await client.dags.list(filter?);
-const scheduled = await client.dags.listScheduled();
-
-// Get/Update/Delete
-const dag = await client.dags.get(id);
-await client.dags.update(id, updates);
-await client.dags.delete(id);
-
-// Resume a paused execution
-await client.dags.resume(executionId);
-```
-
-### Executions
-
-```typescript
-// List executions
-const executions = await client.executions.list(filter?);
-
-// Get execution details
-const execution = await client.executions.get(id);
-const subSteps = await client.executions.getSubSteps(id);
-
-// Delete an execution
-await client.executions.delete(id);
-
-// Stream execution events (AsyncIterable)
-for await (const event of client.executions.streamEvents(id)) {
-  console.log(event.type, event.data);
-}
-```
-
-## CLI
-
-The `desi` CLI ships with the standalone `desiCLI` package. Command groups support default subcommands for convenience:
-
-```bash
-# Artifacts
-desi artifacts              # Same as: desi artifacts list
-desi artifacts report.json  # Same as: desi artifacts get report.json
-
-# Agents
-desi agents                 # Same as: desi agents list
-
-# Results
-desi results exec_123       # Same as: desi results view exec_123
+# Ollama (local, no key needed)
+OLLAMA_BASE_URL=http://localhost:11434   # optional, this is the default
 ```
 
 ## Examples
 
-### News Bulletin Generator
+> All examples below use OpenRouter and an in-memory database (`:memory:`) so you can run them without any local SQLite file.
 
-See [`examples/news-bulletin.ts`](./examples/news-bulletin.ts) for a complete example that creates a news bulletin with multiple categories.
+### 1. Goal → Execute in One Call
 
-```bash
-# Run with Ollama
-bun run examples/news-bulletin.ts
+The fastest way to go from idea to result. `createAndExecuteFromGoal` plans the DAG **and** executes it in a single call.
 
-# Run with OpenRouter
-OPENROUTER_API_KEY=your-key bun run examples/news-bulletin-openrouter.ts
+```typescript
+import { setupDesiAgent } from '@ugm/desiagent';
+
+const client = await setupDesiAgent({
+  llmProvider: 'openrouter',
+  openrouterApiKey: process.env.OPENROUTER_API_KEY,
+  modelName: 'google/gemini-2.5-flash-lite-preview-09-2025',
+  databasePath: ':memory:',
+  skipGenerationStats: true,
+});
+
+const result = await client.dags.createAndExecuteFromGoal({
+  goalText: 'Research the top 5 trends in AI agents for 2025 and write a concise briefing document to ai-trends.md',
+  agentName: 'DecomposerV8',
+  temperature: 0.7,
+});
+
+if (result.status === 'clarification_required') {
+  console.log('Agent needs more info:', result.clarificationQuery);
+} else {
+  console.log('Execution started:', result.executionId);
+
+  // Stream events until completion
+  for await (const event of client.executions.streamEvents(result.executionId)) {
+    console.log(event.type, event.data);
+  }
+
+  // Retrieve final result
+  const details = await client.executions.getWithSubSteps(result.executionId);
+  console.log('Final result:\n', details.finalResult);
+}
+
+await client.shutdown();
 ```
 
-## Manual Abort Tests
+### 2. Plan First, Execute Later
 
-Use these scripts to manually verify that abort signals cancel in-flight LLM calls.
+Separate planning from execution so you can inspect or modify the DAG before running it.
 
-```bash
-# OpenRouter abort test
-OPENROUTER_API_KEY=sk-or-... ABORT_AFTER_MS=2000 bun run test:abort:openrouter
+```typescript
+import { setupDesiAgent } from '@ugm/desiagent';
 
-# Ollama abort test
-OLLAMA_BASE_URL=http://localhost:11434 OLLAMA_MODEL=mistral ABORT_AFTER_MS=2000 bun run test:abort:ollama
+const client = await setupDesiAgent({
+  llmProvider: 'openrouter',
+  openrouterApiKey: process.env.OPENROUTER_API_KEY,
+  modelName: 'google/gemini-2.5-flash-lite-preview-09-2025',
+  databasePath: ':memory:',
+  skipGenerationStats: true,
+});
+
+// Step 1 — Plan
+const plan = await client.dags.createFromGoal({
+  goalText: 'Create a tutorial on processing driftwood into handicrafts — cover cleaning, tools, finishes — and write it to driftwood.md',
+  agentName: 'DecomposerV8',
+  temperature: 0.7,
+});
+
+if (plan.status !== 'success') {
+  console.log('Planning issue:', plan.status);
+  await client.shutdown();
+  process.exit(1);
+}
+
+console.log('DAG created:', plan.dagId);
+
+// Step 2 — Execute
+const execution = await client.dags.execute(plan.dagId);
+console.log('Execution ID:', execution.id);
+
+for await (const event of client.executions.streamEvents(execution.id)) {
+  console.log(event.type, event.data);
+}
+
+const details = await client.executions.getWithSubSteps(execution.id);
+console.log('Final result:\n', details.finalResult);
+
+await client.shutdown();
 ```
 
-## Development
+### 3. List Agents and Tools
 
-### Setup
+Explore what's available in the system.
 
-```bash
-# Install dependencies
-pnpm install
+```typescript
+import { setupDesiAgent } from '@ugm/desiagent';
 
-# Run in development mode
-bun run dev
+const client = await setupDesiAgent({
+  llmProvider: 'openrouter',
+  openrouterApiKey: process.env.OPENROUTER_API_KEY,
+  modelName: 'openai/gpt-4o',
+  databasePath: ':memory:',
+  skipGenerationStats: true,
+  logLevel: 'warn',
+});
+
+// List seeded agents
+const agents = await client.agents.list();
+for (const a of agents) {
+  console.log(`${a.name} (${a.provider}/${a.model}) — ${a.description}`);
+}
+
+// List available tools
+const tools = await client.tools.list();
+for (const t of tools) {
+  console.log(t.function.name);
+}
+
+await client.shutdown();
 ```
 
-### Commands
+### 4. Handle Clarifications
+
+When the agent decides the goal is ambiguous, it returns a clarification query instead of creating a DAG.
+
+```typescript
+import { setupDesiAgent } from '@ugm/desiagent';
+
+const client = await setupDesiAgent({
+  llmProvider: 'openrouter',
+  openrouterApiKey: process.env.OPENROUTER_API_KEY,
+  modelName: 'google/gemini-2.5-flash-lite-preview-09-2025',
+  databasePath: ':memory:',
+  skipGenerationStats: true,
+});
+
+const plan = await client.dags.createFromGoal({
+  goalText: 'Build the app',
+  agentName: 'DecomposerV8',
+});
+
+if (plan.status === 'clarification_required') {
+  console.log('Agent asks:', plan.clarificationQuery);
+
+  // Provide the answer and retry
+  const resumed = await client.dags.resumeFromClarification(
+    plan.dagId,
+    'A Pomodoro timer web app using HTML, CSS, and vanilla JS',
+  );
+  console.log('Resumed status:', resumed.status);
+}
+
+await client.shutdown();
+```
+
+### 5. Custom Inference (No DAG)
+
+Use a named agent directly for a single LLM call — useful for summarisation, translation, or any one-shot task.
+
+```typescript
+import { setupDesiAgent } from '@ugm/desiagent';
+
+const client = await setupDesiAgent({
+  llmProvider: 'openrouter',
+  openrouterApiKey: process.env.OPENROUTER_API_KEY,
+  modelName: 'openai/gpt-4o',
+  databasePath: ':memory:',
+  skipGenerationStats: true,
+});
+
+// Resolve an agent by name and call it directly
+const agent = await client.agents.resolve('Summarizer');
+// ... or use the lower-level inference API in scripts/infer.ts
+
+await client.shutdown();
+```
+
+### Running the Bundled Examples
+
+The [`examples/`](./examples/) directory contains runnable scripts:
 
 ```bash
-# Build
-pnpm build
+# Execute a goal from a file
+bun run examples/execute-goal.ts -f examples/goals/pomodoro-timer.txt
 
-# Type check
-pnpm type-check
+# In-memory database smoke test
+bun run examples/init_6_memory_db.ts
 
-# Run tests
-pnpm test
-pnpm test:watch
-pnpm test:coverage
+# List all agents
+bun run examples/list-agents.ts
 
-# Database commands
-pnpm db:generate
-pnpm db:push
-pnpm db:studio
+# List all tools
+bun run examples/list-tools.ts --names
 ```
+
+## Configuration Reference
+
+```typescript
+interface DesiAgentConfig {
+  llmProvider: 'openai' | 'openrouter' | 'ollama';
+  modelName: string;
+
+  // Provider keys
+  openaiApiKey?: string;
+  openrouterApiKey?: string;
+  ollamaBaseUrl?: string;       // default: http://localhost:11434
+
+  // Storage
+  databasePath?: string;        // default: ~/.desiAgent/data/agent.db
+                                 // use ':memory:' for ephemeral experiments
+  artifactsDir?: string;        // default: sibling of database file
+
+  // Agent definitions
+  agentDefinitionsPath?: string; // default: ~/.desiAgent/agents
+
+  // Logging
+  logLevel?: 'debug' | 'info' | 'warn' | 'error' | 'silent';
+
+  // Lifecycle hooks
+  onExecutionStart?: (executionId: string) => void;
+  onExecutionEnd?: (executionId: string, result: Record<string, any>) => void;
+
+  // Feature flags
+  autoStartScheduler?: boolean;  // default: true
+  enableToolValidation?: boolean; // default: true
+}
+```
+
+## Contributing
+
+We welcome contributions of all kinds — bug fixes, new tools, documentation improvements, and feature ideas.
+
+### Getting Started
+
+1. **Fork & clone** the repository.
+
+   ```bash
+   git clone https://github.com/<your-username>/desiAgent.git
+   cd desiAgent
+   ```
+
+2. **Install dependencies** (requires Bun ≥ 1.3.5).
+
+   ```bash
+   bun install
+   ```
+
+3. **Create a branch** for your change.
+
+   ```bash
+   git checkout -b feat/my-awesome-feature
+   ```
+
+4. **Make your changes**, then verify:
+
+   ```bash
+   bun run type-check   # TypeScript must compile cleanly
+   bun test             # All tests must pass
+   ```
+
+### Code Guidelines
+
+- **TypeScript only** — no plain JS files.
+- **Follow existing patterns** — look at neighbouring files before writing new code. Match naming conventions, imports, and error handling style.
+- **Keep PRs focused** — one logical change per pull request. Small, reviewable diffs are merged faster.
+- **Write tests** — if you add a feature or fix a bug, add or update a test in the corresponding `*.test.ts` file. Run `bun test` to verify.
+- **No secrets** — never commit API keys, tokens, or credentials. Use environment variables and `.env` files (already in `.gitignore`).
+
+### Commit Messages
+
+Follow the [Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```
+feat: add PDF attachment support to inference
+fix: handle empty goal text in DAG creation
+docs: update README examples
+chore: bump drizzle-orm to 0.46
+```
+
+### Pull Request Process
+
+1. Ensure your branch is up to date with `main`.
+2. Open a PR against `main` with a clear title and description of **what** and **why**.
+3. Link any related issues (e.g., `Closes #42`).
+4. A maintainer will review your PR. Address feedback promptly — we aim to merge within a few days.
+
+### Reporting Issues
+
+- Use [GitHub Issues](https://github.com/ugmurthy/desiAgent/issues) to report bugs or request features.
+- Include steps to reproduce, expected vs. actual behaviour, and your environment (OS, Bun version, provider used).
+
+### Code of Conduct
+
+Be respectful and constructive. We follow the [Contributor Covenant](https://www.contributor-covenant.org/) code of conduct.
 
 ## License
 

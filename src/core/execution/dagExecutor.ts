@@ -58,7 +58,10 @@ export interface DAGExecutorConfig {
   db: DrizzleDB;
   llmProvider: LLMProvider;
   toolRegistry: ToolRegistry;
-  artifactsDir?: string;
+  artifactsDir: string;
+  apiKey?: string;
+  ollamaBaseUrl?: string;
+  skipGenerationStats?: boolean;
 }
 
 /**
@@ -116,13 +119,19 @@ export class DAGExecutor {
   private llmProvider: LLMProvider;
   private toolRegistry: ToolRegistry;
   private artifactsDir: string;
+  private apiKey?: string;
+  private ollamaBaseUrl?: string;
+  private skipGenerationStats?: boolean;
   private logger = getLogger();
 
   constructor(config: DAGExecutorConfig) {
     this.db = config.db;
     this.llmProvider = config.llmProvider;
     this.toolRegistry = config.toolRegistry;
-    this.artifactsDir = config.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
+    this.artifactsDir = config.artifactsDir;
+    this.apiKey = config.apiKey;
+    this.ollamaBaseUrl = config.ollamaBaseUrl;
+    this.skipGenerationStats = config.skipGenerationStats;
 
     this.logger.debug({
       provider: this.llmProvider.name,
@@ -543,7 +552,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             throw new Error(`No agent found with name: ${agentName} (not in pre-fetch cache)`);
           }
 
-          const llmExecuteTool = new LlmExecuteTool();
+          const llmExecuteTool = new LlmExecuteTool({ apiKey: this.apiKey, baseUrl: this.ollamaBaseUrl, skipGenerationStats: this.skipGenerationStats });
 
           const result = await llmExecuteTool.execute({
             provider: agent.provider,

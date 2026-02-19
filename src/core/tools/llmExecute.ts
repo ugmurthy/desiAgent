@@ -51,6 +51,17 @@ export class LlmExecuteTool extends BaseTool<LlmExecuteInput, LlmExecuteOutput> 
   description = 'cd Execute a prompt using a specified LLM provider and model with optional attachments and parameters';
   inputSchema = llmExecuteInputSchema;
 
+  private apiKey?: string;
+  private baseUrl?: string;
+  private skipGenerationStats?: boolean;
+
+  constructor(options?: { apiKey?: string; baseUrl?: string; skipGenerationStats?: boolean }) {
+    super();
+    this.apiKey = options?.apiKey;
+    this.baseUrl = options?.baseUrl;
+    this.skipGenerationStats = options?.skipGenerationStats;
+  }
+
   private isImageFile(mimeType?: string, filename?: string): boolean {
     const imageMimeTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
     
@@ -79,6 +90,9 @@ export class LlmExecuteTool extends BaseTool<LlmExecuteInput, LlmExecuteOutput> 
       const provider = createLLMProvider({
         provider: input.provider,
         model: input.model,
+        apiKey: this.apiKey,
+        baseUrl: this.baseUrl,
+        skipGenerationStats: this.skipGenerationStats,
       });
 
       const validation = await provider.validateToolCallSupport(input.model);

@@ -18,6 +18,8 @@ import { LLMProviderError } from '../../errors/index.js';
 
 const BASE_URL = 'https://openrouter.ai/api/v1';
 const DEFAULT_TIMEOUT_MS = 60000;
+const MAX_RETRIES = 5;
+const INITIAL_RETRY_MS = 1000;
 
 type OpenAIToolCall = {
   id: string;
@@ -172,12 +174,14 @@ export class OpenRouterProvider implements LLMProvider {
   private apiKey: string;
   private model: string;
   private defaultMaxTokens: number;
+  private skipGenerationStats: boolean;
   private logger = getLogger();
 
   constructor(
     apiKey: string,
     model: string,
-    defaultMaxTokens: number = 4096
+    defaultMaxTokens: number = 4096,
+    skipGenerationStats: boolean = false
   ) {
     if (!apiKey) {
       throw new Error('OpenRouter API key is required');
@@ -186,23 +190,28 @@ export class OpenRouterProvider implements LLMProvider {
     this.apiKey = apiKey;
     this.model = model;
     this.defaultMaxTokens = defaultMaxTokens;
+    this.skipGenerationStats = skipGenerationStats;
   }
 
   /**
-   * Fetch generation stats from OpenRouter to get cost information
+   * Fetch generation stats from OpenRouter to get cost information.
+   * Uses a longer initial delay to allow the generation record to become
+   * available, and backs off aggressively on 429 rate-limit responses.
    */
   private async extractGenerationId(
     data: OpenAIChatCompletionResponse, 
     maxAttempts = 5, 
-    initialDelayMs = 500
+    initialDelayMs = 2000
   ): Promise<{ data?: Record<string, any>; error?: string }> {
     const generationId = data.id;
     this.logger.debug({ url: `${BASE_URL}/generation?id=${generationId}` }, 'Generation url');
     
+    let nextDelayMs = initialDelayMs;
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const delayMs = initialDelayMs * Math.pow(1.5, attempt - 1);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        this.logger.info({ generationId, attempt, maxAttempts, delayMs: nextDelayMs }, 'Fetching generation stats');
+        await new Promise(resolve => setTimeout(resolve, nextDelayMs));
         
         const res = await fetch(
           `${BASE_URL}/generation?id=${generationId}`,
@@ -210,11 +219,19 @@ export class OpenRouterProvider implements LLMProvider {
         );
         
         if (!res.ok) {
+          if (res.status === 429) {
+            const retryAfter = res.headers.get('retry-after');
+            const retryMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : nextDelayMs * 3;
+            this.logger.warn({ generationId, attempt, retryMs }, 'Rate limited fetching generation stats, backing off');
+            nextDelayMs = retryMs;
+            continue;
+          }
           if (attempt === maxAttempts) {
             this.logger.warn({ status: res.status, generationId, attempts: attempt }, 'Failed to fetch generation details after max attempts');
             return { error: 'Failed to fetch details' };
           }
           this.logger.debug({ status: res.status, generationId, attempt }, 'Generation not ready, retrying...');
+          nextDelayMs = nextDelayMs * 2;
           continue;
         }
         
@@ -238,10 +255,43 @@ export class OpenRouterProvider implements LLMProvider {
           return { error: String(error) };
         }
         this.logger.debug({ err: error, generationId, attempt }, 'Error fetching generation, retrying...');
+        nextDelayMs = nextDelayMs * 2;
       }
     }
     
     return { error: 'Max attempts reached' };
+  }
+
+  /**
+   * Fetch with exponential backoff retry on 429 rate-limit responses.
+   */
+  private async fetchWithRetry(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+    abortSignal?: AbortSignal
+  ): Promise<Response> {
+    let delayMs = INITIAL_RETRY_MS;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const res = await fetchWithTimeout(url, init, timeoutMs, abortSignal);
+
+      if (res.status !== 429) {
+        return res;
+      }
+
+      if (attempt === MAX_RETRIES) {
+        return res;
+      }
+
+      const retryAfter = res.headers.get('retry-after');
+      const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : delayMs;
+      this.logger.warn({ attempt, maxRetries: MAX_RETRIES, waitMs }, 'Rate limited (429), retrying after backoff');
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      delayMs = delayMs * 2;
+    }
+
+    throw new Error('Unreachable');
   }
 
   /**
@@ -299,7 +349,7 @@ export class OpenRouterProvider implements LLMProvider {
         max_tokens: params.maxTokens ?? this.defaultMaxTokens,
       };
       
-      const res = await fetchWithTimeout(
+      const res = await this.fetchWithRetry(
         `${BASE_URL}/chat/completions`,
         {
           method: 'POST',
@@ -318,8 +368,15 @@ export class OpenRouterProvider implements LLMProvider {
       const usage = extractUsage(data);
       const content = data.choices[0]?.message?.content || '';
 
-      const generation_stats = await this.extractGenerationId(data);
-      const costUsd = extractCostFromGenerationStats(generation_stats);
+      let generation_stats: { data?: Record<string, any>; error?: string } | undefined;
+      let costUsd: number | undefined;
+
+      if (!this.skipGenerationStats) {
+        generation_stats = await this.extractGenerationId(data);
+        costUsd = extractCostFromGenerationStats(generation_stats);
+      } else {
+        this.logger.debug('Skipping generation stats fetch (skipGenerationStats=true)');
+      }
 
       if (usage) {
         this.logger.debug({ usage, generation_stats, costUsd }, 'OpenRouter chat response metadata');
@@ -355,7 +412,7 @@ export class OpenRouterProvider implements LLMProvider {
 
       this.logger.debug({ model: this.model }, 'OpenRouter callWithTools request');
 
-      const res = await fetchWithTimeout(
+      const res = await this.fetchWithRetry(
         `${BASE_URL}/chat/completions`,
         {
           method: 'POST',
@@ -373,8 +430,15 @@ export class OpenRouterProvider implements LLMProvider {
       const data = await res.json() as OpenAIChatCompletionResponse;
       const usage = extractUsage(data);
       
-      const generation_stats = await this.extractGenerationId(data);
-      const costUsd = extractCostFromGenerationStats(generation_stats);
+      let generation_stats: { data?: Record<string, any>; error?: string } | undefined;
+      let costUsd: number | undefined;
+
+      if (!this.skipGenerationStats) {
+        generation_stats = await this.extractGenerationId(data);
+        costUsd = extractCostFromGenerationStats(generation_stats);
+      } else {
+        this.logger.debug('Skipping generation stats fetch (skipGenerationStats=true)');
+      }
 
       if (usage) {
         this.logger.debug({ usage, generation_stats, costUsd }, 'OpenRouter callWithTools response metadata');

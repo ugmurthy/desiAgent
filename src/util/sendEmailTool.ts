@@ -82,6 +82,14 @@ export async function sendEmailTool(input: SendEmailInput): Promise<SendEmailOut
       warn: (msg, data) => logger.warn(data, msg),
       error: (msg, data) => logger.error(data, msg),
     },
+    artifactsDir: '.',
+    smtp: {
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587,
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+      from: process.env.SMTP_FROM,
+    },
   };
 
   const result = await toolsService.execute('sendEmail', input, ctx);

@@ -71,14 +71,23 @@ export class FetchPageTool extends BaseTool<any, FetchPageOutput> {
 
         clearTimeout(timeoutId);
 
-        if (!response.ok) {
-          throw new Error(
-            `HTTP ${response.status}: ${response.statusText}`
-          );
-        }
-
         const contentType =
           response.headers.get('content-type') || 'text/plain';
+
+        if (!response.ok) {
+          this.logger.warn(
+            `Fetch returned HTTP ${response.status} for ${input.url}: ${response.statusText}`
+          );
+          return {
+            url: input.url,
+            status: response.status,
+            contentType,
+            content: `HTTP ${response.status}: ${response.statusText}`,
+            contentLength: 0,
+            truncated: false,
+          };
+        }
+
         let content = await response.text();
 
         const contentLength = Buffer.byteLength(content, 'utf-8');
@@ -114,10 +123,16 @@ export class FetchPageTool extends BaseTool<any, FetchPageOutput> {
         throw error;
       }
     } catch (error) {
-      this.logger.error(
-        `Fetch failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-      throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Fetch failed for ${input.url}: ${message}`);
+      return {
+        url: input.url,
+        status: 0,
+        contentType: 'text/plain',
+        content: `Fetch failed: ${message}`,
+        contentLength: 0,
+        truncated: false,
+      };
     }
   }
 }

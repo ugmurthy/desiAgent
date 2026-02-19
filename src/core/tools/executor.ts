@@ -10,6 +10,7 @@ import type { ToolRegistry } from './registry.js';
 import type { ToolContext } from './base.js';
 import { ToolError } from '../../errors/index.js';
 import { resolve } from 'path';
+import type { ResolvedConfig } from '../../types/config.js';
 
 /**
  * Tool executor for running tools during execution
@@ -18,10 +19,14 @@ export class ToolExecutor {
   private registry: ToolRegistry;
   private logger = getLogger();
   private artifactsDir: string;
+  private smtp?: ResolvedConfig['smtp'];
+  private imap?: ResolvedConfig['imap'];
 
-  constructor(registry: ToolRegistry, artifactsDir?: string) {
+  constructor(registry: ToolRegistry, artifactsDir: string, smtp?: ResolvedConfig['smtp'], imap?: ResolvedConfig['imap']) {
     this.registry = registry;
-    this.artifactsDir = artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
+    this.artifactsDir = artifactsDir;
+    this.smtp = smtp;
+    this.imap = imap;
   }
 
   /**
@@ -51,6 +56,8 @@ export class ToolExecutor {
         this.logger.debug(`Tool event: ${event}`, data);
       },
       artifactsDir: resolve(this.artifactsDir),
+      smtp: this.smtp,
+      imap: this.imap,
     };
 
     try {

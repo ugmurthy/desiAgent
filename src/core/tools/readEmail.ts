@@ -49,19 +49,15 @@ export class ReadEmailTool extends BaseTool<any, ReadEmailOutput> {
   description = 'Read emails from Gmail via IMAP. Supports filtering by sender, unread status, and search terms.';
   inputSchema: any = readEmailInputSchema;
 
-  private getImapConfig() {
-    const host = process.env.IMAP_HOST || 'imap.gmail.com';
-    const port = process.env.IMAP_PORT ? parseInt(process.env.IMAP_PORT, 10) : 993;
-    const user = process.env.IMAP_USER || process.env.SMTP_USER;
-    const pass = process.env.IMAP_PASS || process.env.SMTP_PASS;
-
-    if (!user || !pass) {
+  private getImapConfig(ctx: ToolContext) {
+    const imap = ctx.imap;
+    if (!imap?.user || !imap?.pass) {
       throw new Error(
-        'Email configuration missing. Required env vars: IMAP_USER/SMTP_USER and IMAP_PASS/SMTP_PASS'
+        'IMAP configuration missing. Provide imap config via setupDesiAgent.'
       );
     }
 
-    return { host, port, user, pass };
+    return { host: imap.host || 'imap.gmail.com', port: imap.port, user: imap.user, pass: imap.pass };
   }
 
   private buildSearchCriteria(input: ReadEmailInput): any {
@@ -105,7 +101,7 @@ export class ReadEmailTool extends BaseTool<any, ReadEmailOutput> {
     let client: ImapFlow | null = null;
 
     try {
-      const config = this.getImapConfig();
+      const config = this.getImapConfig(ctx);
 
       client = new ImapFlow({
         host: config.host,

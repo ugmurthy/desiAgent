@@ -6,81 +6,20 @@ import { existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import { DatabaseError, InitializationError } from '../errors/index.js';
+import { generateAllSQL } from '../services/initDB.js';
 
 export type DrizzleDB = BunSQLiteDatabase<typeof schema>;
 
 let dbInstance: DrizzleDB | null = null;
 
 /**
- * SQL statements to create all tables based on the schema
- */
-const CREATE_TABLES_SQL = `
--- Agents table
-CREATE TABLE IF NOT EXISTS agents (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  version TEXT NOT NULL,
-  prompt_template TEXT NOT NULL,
-  provider TEXT,
-  model TEXT,
-  active INTEGER NOT NULL DEFAULT 0,
-  metadata TEXT,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-);
-
--- Unique index for agent name+version
-CREATE UNIQUE INDEX IF NOT EXISTS idx_name_version ON agents(name, version);
-
--- Partial unique index for active agent per name
-CREATE UNIQUE INDEX IF NOT EXISTS idx_active_agent ON agents(name) WHERE active = 1;
-
--- DAGs table
-CREATE TABLE IF NOT EXISTS dags (
-  id TEXT PRIMARY KEY,
-  status TEXT NOT NULL,
-  result TEXT,
-  usage TEXT,
-  generation_stats TEXT,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  params TEXT,
-  agent_name TEXT,
-  dag_title TEXT,
-  cron_schedule TEXT,
-  schedule_active INTEGER NOT NULL DEFAULT 0,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-);
-
--- DAG Executions table
-CREATE TABLE IF NOT EXISTS dag_executions (
-  id TEXT PRIMARY KEY,
-  dag_id TEXT NOT NULL REFERENCES dags(id) ON DELETE CASCADE,
-  status TEXT NOT NULL,
-  execution_results TEXT,
-  failure_reason TEXT,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
-);
-
--- DAG Sub-Steps table
-CREATE TABLE IF NOT EXISTS dag_sub_steps (
-  id TEXT PRIMARY KEY,
-  execution_id TEXT NOT NULL REFERENCES dag_executions(id) ON DELETE CASCADE,
-  node_id TEXT NOT NULL,
-  "index" INTEGER NOT NULL,
-  type TEXT NOT NULL CHECK(type IN ('action', 'result', 'decision')),
-  content TEXT NOT NULL,
-  created_at INTEGER NOT NULL DEFAULT (unixepoch())
-);
-`;
-
-/**
  * Initialize database tables if they don't exist
+ * Uses generateAllSQL() from initDB to stay in sync with the Drizzle schema
  */
 function initializeTables(sqlite: any, logger: any): void {
   try {
-    sqlite.exec(CREATE_TABLES_SQL);
+    const { sql } = generateAllSQL();
+    sqlite.exec(sql);
     logger.info('Database tables initialized');
   } catch (error) {
     throw new DatabaseError(
@@ -94,40 +33,33 @@ function initializeTables(sqlite: any, logger: any): void {
 /**
  * Create and initialize database connection
  */
-function createDatabase(dbPath: string): DrizzleDB {
+function createDatabase(dbPath: string, isMemoryDb: boolean): DrizzleDB {
   const logger = getLogger();
 
   try {
-    // Ensure data directory exists
-    const dbDir = dirname(dbPath);
-    if (!existsSync(dbDir)) {
-      mkdirSync(dbDir, { recursive: true });
-      logger.info(`Created database directory: ${dbDir}`);
+    // Only create directory for file-based databases
+    if (!isMemoryDb) {
+      const dbDir = dirname(dbPath);
+      if (!existsSync(dbDir)) {
+        mkdirSync(dbDir, { recursive: true });
+        logger.info(`Created database directory: ${dbDir}`);
+      }
     }
 
-    // Check if database file exists (to determine if we need to create tables)
-    const isNewDatabase = !existsSync(dbPath);
-
-    // Open SQLite database using bun:sqlite
+    // Open SQLite database
     const sqlite = new Database(dbPath);
 
-    // Enable foreign keys and WAL mode
-    sqlite.exec('PRAGMA journal_mode = WAL;');
+    // WAL mode only for file-based databases
+    if (!isMemoryDb) {
+      sqlite.exec('PRAGMA journal_mode = WAL;');
+    }
     sqlite.exec('PRAGMA foreign_keys = ON;');
 
-    // Initialize tables if this is a new database
-    if (isNewDatabase) {
-      logger.info('New database detected, creating tables...');
-      initializeTables(sqlite, logger);
-    } else {
-      // For existing databases, ensure tables exist (handles partial initialization)
-      initializeTables(sqlite, logger);
-    }
+    // Always initialize tables
+    initializeTables(sqlite, logger);
 
     const db = drizzle(sqlite, { schema });
-
     logger.info(`Database initialized: ${dbPath}`);
-
     return db;
   } catch (error) {
     const logger = getLogger();
@@ -143,9 +75,9 @@ function createDatabase(dbPath: string): DrizzleDB {
 /**
  * Get or create the global database instance
  */
-export function getDatabase(dbPath: string): DrizzleDB {
+export function getDatabase(dbPath: string, isMemoryDb: boolean = false): DrizzleDB {
   if (!dbInstance) {
-    dbInstance = createDatabase(dbPath);
+    dbInstance = createDatabase(dbPath, isMemoryDb);
   }
   return dbInstance;
 }

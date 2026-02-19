@@ -57,7 +57,11 @@ export interface DAGsServiceDeps {
   toolRegistry: ToolRegistry;
   agentsService: AgentsService;
   scheduler?: DagScheduler;
-  artifactsDir?: string;
+  artifactsDir: string;
+  staleExecutionMinutes?: number;
+  apiKey?: string;
+  ollamaBaseUrl?: string;
+  skipGenerationStats?: boolean;
 }
 
 export interface CreateDAGFromGoalOptions {
@@ -153,6 +157,10 @@ export class DAGsService {
   private agentsService: AgentsService;
   private scheduler?: DagScheduler;
   private artifactsDir: string;
+  private staleExecutionMinutes: number;
+  private apiKey?: string;
+  private ollamaBaseUrl?: string;
+  private skipGenerationStats?: boolean;
   private logger = getLogger();
 
   constructor(deps: DAGsServiceDeps) {
@@ -161,7 +169,11 @@ export class DAGsService {
     this.toolRegistry = deps.toolRegistry;
     this.agentsService = deps.agentsService;
     this.scheduler = deps.scheduler;
-    this.artifactsDir = deps.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
+    this.artifactsDir = deps.artifactsDir;
+    this.staleExecutionMinutes = deps.staleExecutionMinutes ?? 5;
+    this.apiKey = deps.apiKey;
+    this.ollamaBaseUrl = deps.ollamaBaseUrl;
+    this.skipGenerationStats = deps.skipGenerationStats;
   }
 
   private buildGlobalContext(job: DecomposerJob): { formatted: string; totalTasks: number } {
@@ -319,7 +331,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     let activeLLMProvider: LLMProvider;
     if (activeProvider && activeModel) {
       this.logger.info({ requestedProvider: activeProvider, requestedModel: activeModel }, 'Creating custom LLM provider');
-      activeLLMProvider = createLLMProvider({ provider: activeProvider as 'openai' | 'openrouter' | 'ollama', model: activeModel });
+      activeLLMProvider = createLLMProvider({ provider: activeProvider as 'openai' | 'openrouter' | 'ollama', model: activeModel, apiKey: this.apiKey, baseUrl: this.ollamaBaseUrl, skipGenerationStats: this.skipGenerationStats });
 
       const validationResult = await activeLLMProvider.validateToolCallSupport(activeModel);
       if (!validationResult.supported) {
@@ -957,6 +969,9 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       llmProvider: this.llmProvider,
       toolRegistry: this.toolRegistry,
       artifactsDir: this.artifactsDir,
+      apiKey: this.apiKey,
+      ollamaBaseUrl: this.ollamaBaseUrl,
+      skipGenerationStats: this.skipGenerationStats,
     });
 
     // Start execution in background - don't await
@@ -984,7 +999,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
     // For 'running' executions, only allow resume if they are stale (no recent update)
     if (execution.status === 'running') {
-      const staleMinutes = parseInt(process.env.STALE_EXECUTION_MINUTES || '5', 10);
+      const staleMinutes = this.staleExecutionMinutes;
       const staleThreshold = new Date(Date.now() - staleMinutes * 60 * 1000);
       const lastActivity = execution.updatedAt || execution.startedAt;
 
@@ -1038,6 +1053,9 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       llmProvider: this.llmProvider,
       toolRegistry: this.toolRegistry,
       artifactsDir: this.artifactsDir,
+      apiKey: this.apiKey,
+      ollamaBaseUrl: this.ollamaBaseUrl,
+      skipGenerationStats: this.skipGenerationStats,
     });
 
     // Start execution in background - don't await
@@ -1130,7 +1148,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     }
 
     const globalContext = this.buildGlobalContext(job);
-    const llmExecuteTool = new LlmExecuteTool();
+    const llmExecuteTool = new LlmExecuteTool({ apiKey: this.apiKey, baseUrl: this.ollamaBaseUrl, skipGenerationStats: this.skipGenerationStats });
     const overrideProvider = params?.provider;
     const overrideModel = params?.model;
 
@@ -1199,6 +1217,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             runId: `redo-inference-${Date.now()}`,
             executionId,
             subStepId: pendingSubStepId,
+            artifactsDir: this.artifactsDir,
           });
 
           await this.db.update(dagSubSteps)

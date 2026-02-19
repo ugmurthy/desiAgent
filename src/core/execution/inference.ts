@@ -61,6 +61,10 @@ export interface CustomInferenceOutput {
 export interface InferenceContext {
   db: DrizzleDB;
   runId?: string;
+  artifactsDir?: string;
+  apiKey?: string;
+  ollamaBaseUrl?: string;
+  skipGenerationStats?: boolean;
   defaults?: {
     maxTokens?: number;
     temperature?: number;
@@ -114,7 +118,7 @@ export async function customInference(
     fileCount: validatedInput.attachments?.length ?? 0,
   }, 'Executing custom inference');
 
-  const llmExecuteTool = new LlmExecuteTool();
+  const llmExecuteTool = new LlmExecuteTool({ apiKey: ctx.apiKey, baseUrl: ctx.ollamaBaseUrl, skipGenerationStats: ctx.skipGenerationStats });
 
   const result = await llmExecuteTool.execute(
     {
@@ -133,6 +137,7 @@ export async function customInference(
       logger,
       runId: ctx.runId || `inference-${Date.now()}`,
       subStepId: `step-${Date.now()}`,
+      artifactsDir: ctx.artifactsDir || '.',
     }
   );
 

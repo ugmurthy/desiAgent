@@ -56,34 +56,28 @@ export class SendEmailTool extends BaseTool<any, SendEmailOutput> {
   private transporter: Transporter | null = null;
   
   private resolveAttachmentPath(filePath: string, ctx: ToolContext): string {
-    const artifactsDir = ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts';
-    return path.resolve(artifactsDir, path.basename(filePath));
+    return path.resolve(ctx.artifactsDir, path.basename(filePath));
   }
 
-  private getTransporter(): Transporter {
+  private getTransporter(ctx: ToolContext): Transporter {
     if (this.transporter) {
       return this.transporter;
     }
 
-    const smtpHost = process.env.SMTP_HOST;
-    const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
-    const smtpUser = process.env.SMTP_USER;
-    const smtpPass = process.env.SMTP_PASS;
-    const smtpFrom = process.env.SMTP_FROM;
-
-    if (!smtpHost || !smtpUser || !smtpPass || !smtpFrom) {
+    const smtp = ctx.smtp;
+    if (!smtp?.host || !smtp?.user || !smtp?.pass || !smtp?.from) {
       throw new Error(
-        'Email configuration missing. Required env vars: SMTP_HOST, SMTP_USER, SMTP_PASS, SMTP_FROM'
+        'SMTP configuration missing. Provide smtp config via setupDesiAgent.'
       );
     }
 
     this.transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpPort === 465,
+      host: smtp.host,
+      port: smtp.port,
+      secure: smtp.port === 465,
       auth: {
-        user: smtpUser,
-        pass: smtpPass,
+        user: smtp.user,
+        pass: smtp.pass,
       },
     });
 
@@ -102,8 +96,8 @@ export class SendEmailTool extends BaseTool<any, SendEmailOutput> {
     ctx.logger.info(`Sending email to: ${input.to}`);
 
     try {
-      const transporter = this.getTransporter();
-      const from = process.env.SMTP_FROM!;
+      const transporter = this.getTransporter(ctx);
+      const from = ctx.smtp?.from;
 
       const mailOptions: nodemailer.SendMailOptions = {
         from,

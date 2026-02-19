@@ -33,13 +33,15 @@ export function createLLMProvider(
     baseUrl?: string;
     model?: string;
     maxTokens?: number;
+    skipGenerationStats?: boolean;
   }
 ): LLMProvider {
   const logger = getLogger();
   
   const model = config.model || getDefaultModel(config.provider);
   const maxTokens = config.maxTokens || 4096;
-  const cacheKey = `${config.provider}:${model}:${maxTokens}`;
+  const skipStats = config.skipGenerationStats ? 'skip' : 'stats';
+  const cacheKey = `${config.provider}:${model}:${maxTokens}:${skipStats}`;
 
   // Check cache first
   const cached = providerCache.get(cacheKey);
@@ -60,14 +62,14 @@ export function createLLMProvider(
     logger.info(`Creating OpenAI provider (model: ${model})`);
     provider = new OpenAIProvider(apiKey, model, maxTokens);
   } else if (config.provider === 'openrouter') {
-    const apiKey = config.apiKey || process.env.OPENROUTER_API_KEY;
+    const apiKey = config.apiKey;
 
     if (!apiKey) {
       throw new Error('OPENROUTER_API_KEY is required for openrouter provider');
     }
 
-    logger.info(`Creating OpenRouter provider (model: ${model})`);
-    provider = new OpenRouterProvider(apiKey, model, maxTokens);
+    logger.info(`Creating OpenRouter provider (model: ${model}, skipGenerationStats: ${!!config.skipGenerationStats})`);
+    provider = new OpenRouterProvider(apiKey, model, maxTokens, config.skipGenerationStats ?? false);
   } else if (config.provider === 'ollama') {
     const baseUrl = config.baseUrl || 'http://localhost:11434';
 

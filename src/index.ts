@@ -5,8 +5,9 @@
  * Exports the setupDesiAgent function and all public types.
  */
 
-import type { DesiAgentConfig, ProcessedDesiAgentConfig } from './types/config.js';
-import { DesiAgentConfigSchema } from './types/config.js';
+import type { DesiAgentConfig } from './types/config.js';
+import { DesiAgentConfigSchema, resolveConfig } from './types/config.js';
+import { z } from 'zod';
 import packageJson from '../package.json' with { type: 'json' };
 import type { DesiAgentClient } from './types/index.js';
 import {
@@ -15,7 +16,8 @@ import {
 } from './errors/index.js';
 import { initializeLogger, getLogger } from './util/logger.js';
 import { getDatabase, closeDatabase } from './db/client.js';
-import { dirname, resolve } from 'path';
+import { seedAgents } from './services/initDB.js';
+import { Database } from 'bun:sqlite';
 import { AgentsService } from './core/execution/agents.js';
 import { DAGsService } from './core/execution/dags.js';
 import { ExecutionsService } from './core/execution/executions.js';
@@ -37,6 +39,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
   costs: CostsService;
   version: string = packageJson.version;
   private logger = getLogger();
+  private isMemoryDb: boolean;
 
   constructor(
     agents: AgentsService,
@@ -44,7 +47,8 @@ class DesiAgentClientImpl implements DesiAgentClient {
     executions: ExecutionsService,
     tools: ToolsService,
     artifacts: ArtifactsService,
-    costs: CostsService
+    costs: CostsService,
+    isMemoryDb: boolean = false
   ) {
     this.agents = agents;
     this.dags = dags;
@@ -52,6 +56,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
     this.tools = tools;
     this.artifacts = artifacts;
     this.costs = costs;
+    this.isMemoryDb = isMemoryDb;
   }
 
   async executeTask(_agent: any, _task: string, _files?: Buffer[]): Promise<any> {
@@ -60,6 +65,9 @@ class DesiAgentClientImpl implements DesiAgentClient {
   }
 
   async shutdown(): Promise<void> {
+    if (this.isMemoryDb) {
+      this.logger.warn('Shutting down in-memory database — all data will be lost');
+    }
     this.logger.info('Shutting down desiAgent');
     closeDatabase();
   }
@@ -92,29 +100,36 @@ class DesiAgentClientImpl implements DesiAgentClient {
  */
 export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgentClient> {
   try {
-    // Validate and process configuration
-    const validatedConfig = validateConfig(config);
+    // Validate configuration via Zod
+    const validated = validateConfig(config);
 
-    // Initialize logger
-    initializeLogger(validatedConfig.logLevel);
+    // Resolve all defaults into a frozen ResolvedConfig
+    const resolved = resolveConfig(validated);
+
+    // Initialize logger with resolved values
+    initializeLogger(resolved.logLevel, resolved.logDest, resolved.logDir);
     const logger = getLogger();
 
     logger.info(`desiAgent version ${packageJson.version}`);
    
     logger.info( {
-      provider: validatedConfig.llmProvider,
-      model: validatedConfig.modelName,
-      logLevel: validatedConfig.logLevel,
+      provider: resolved.llmProvider,
+      model: resolved.modelName,
+      logLevel: resolved.logLevel,
     },'Initializing desiAgent');
 
     // Initialize database
-    const db = getDatabase(validatedConfig.databasePath);
+    const db = getDatabase(resolved.databasePath, resolved.isMemoryDb);
     logger.info('Database initialized');
 
-    // Compute artifacts directory from config or database path
-    const artifactsDir = validatedConfig.artifactsDir 
-      || resolve(dirname(validatedConfig.databasePath), 'artifacts');
-    logger.debug({ artifactsDir }, 'Artifacts directory configured');
+    // Seed agents for in-memory databases
+    if (resolved.isMemoryDb) {
+      const sqlite = (db as any).$client as Database;
+      const seeded = seedAgents(sqlite);
+      logger.info({ agentsSeeded: seeded }, 'In-memory database seeded');
+    }
+
+    logger.debug({ artifactsDir: resolved.artifactsDir }, 'Artifacts directory configured');
 
     // Initialize services
     const agentsService = new AgentsService(db);
@@ -123,32 +138,33 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     // Initialize tool registry
     const toolRegistry = createToolRegistry();
     const toolsService = new ToolsService(toolRegistry);
-    const toolExecutor = new ToolExecutor(toolRegistry, artifactsDir);
+    const toolExecutor = new ToolExecutor(toolRegistry, resolved.artifactsDir, resolved.smtp, resolved.imap);
 
     // Initialize LLM provider
-    const llmProviderConfig = {
-      provider: validatedConfig.llmProvider as 'openai' | 'openrouter' | 'ollama',
-      apiKey: validatedConfig.llmProvider === 'openrouter' 
-        ? validatedConfig.openrouterApiKey 
-        : validatedConfig.openaiApiKey,
-      baseUrl: validatedConfig.ollamaBaseUrl,
-      model: validatedConfig.modelName,
-    };
+    const llmProvider = createLLMProvider({
+      provider: resolved.llmProvider,
+      apiKey: resolved.apiKey,
+      baseUrl: resolved.ollamaBaseUrl,
+      model: resolved.modelName,
+      skipGenerationStats: resolved.skipGenerationStats,
+    });
+    await validateLLMSetup(llmProvider, resolved.modelName);
 
-    const llmProvider = createLLMProvider(llmProviderConfig);
-    await validateLLMSetup(llmProvider, validatedConfig.modelName);
-
-    // Initialize DAGs service (requires llmProvider, toolRegistry, agentsService)
+    // Initialize DAGs service
     const dagsService = new DAGsService({
       db,
       llmProvider,
       toolRegistry,
       agentsService,
-      artifactsDir,
+      artifactsDir: resolved.artifactsDir,
+      staleExecutionMinutes: resolved.staleExecutionMinutes,
+      apiKey: resolved.apiKey,
+      ollamaBaseUrl: resolved.ollamaBaseUrl,
+      skipGenerationStats: resolved.skipGenerationStats,
     });
 
     // Initialize artifacts service
-    const artifactsService = new ArtifactsService(artifactsDir);
+    const artifactsService = new ArtifactsService(resolved.artifactsDir);
 
     // Initialize costs service
     const costsService = new CostsService(db);
@@ -161,17 +177,19 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       toolsService,
       artifactsService,
       costsService,
+      resolved.isMemoryDb,
     );
 
     logger.info('desiAgent initialized successfully', {
       provider: llmProvider.name,
-      model: validatedConfig.modelName,
+      model: resolved.modelName,
       tools: toolRegistry.getAllDefinitions().length,
     });
 
     // Store internal services on client
     (client as any)._toolExecutor = toolExecutor;
     (client as any)._llmProvider = llmProvider;
+    (client as any)._resolved = resolved;
 
     return client;
   } catch (error) {
@@ -189,9 +207,9 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
 /**
  * Validate and process configuration
  */
-function validateConfig(config: DesiAgentConfig): ProcessedDesiAgentConfig {
+function validateConfig(config: DesiAgentConfig): z.infer<typeof DesiAgentConfigSchema> {
   try {
-    return DesiAgentConfigSchema.parse(config) as ProcessedDesiAgentConfig;
+    return DesiAgentConfigSchema.parse(config);
   } catch (error) {
     throw new ConfigurationError(
       `Invalid configuration: ${error instanceof Error ? error.message : String(error)}`,
@@ -201,8 +219,8 @@ function validateConfig(config: DesiAgentConfig): ProcessedDesiAgentConfig {
 }
 
 // Export all public types and errors
-export type { DesiAgentConfig, ProcessedDesiAgentConfig } from './types/config.js';
-export { DesiAgentConfigSchema } from './types/config.js';
+export type { DesiAgentConfig, ProcessedDesiAgentConfig, ResolvedConfig } from './types/config.js';
+export { DesiAgentConfigSchema, resolveConfig } from './types/config.js';
 export type { DesiAgentClient } from './types/index.js';
 export {
   ExecutionStatus,
@@ -314,4 +332,4 @@ export {
 } from './util/sendEmailTool.js';
 
 // Database initialization
-export { initDB, type InitDBOptions, type InitDBResult } from './services/initDB.js';
+export { initDB, seedAgents, type InitDBOptions, type InitDBResult } from './services/initDB.js';

@@ -38,7 +38,7 @@ describe('ToolExecutor', () => {
 
   beforeEach(() => {
     registry = new ToolRegistry();
-    executor = new ToolExecutor(registry);
+    executor = new ToolExecutor(registry, '/tmp/test-artifacts');
   });
 
   describe('execute', () => {

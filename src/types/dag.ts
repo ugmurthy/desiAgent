@@ -28,13 +28,13 @@ export const DecomposerJobSchema = z.object({
     grounded_value: z.string(),
   })),
   sub_tasks: z.array(SubTaskSchema),
-  synthesis_plan: z.string(),
+  synthesis_plan: z.string().default(""),
   validation: z.object({
-    coverage: z.string(),
-    gaps: z.array(z.string()),
-    iteration_triggers: z.array(z.string()),
-  }),
-  clarification_needed: z.boolean(),
+    coverage: z.string().default(""),
+    gaps: z.array(z.string()).default([]),
+    iteration_triggers: z.array(z.string()).default([]),
+  }).default({}),
+  clarification_needed: z.boolean().default(false),
   clarification_query: z.string().nullable().optional().transform(v => v ?? ""),
 }).refine(
   (data) => {

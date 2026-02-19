@@ -42,7 +42,7 @@ export class WriteFileTool extends BaseTool<any, WriteFileOutput> {
   private logger = getLogger();
 
   private getArtifactsDir(ctx: ToolContext): string {
-    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+    return resolve(ctx.artifactsDir);
   }
 
   /**

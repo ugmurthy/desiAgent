@@ -227,6 +227,7 @@ describe('ToolRegistry', () => {
             warn: () => {},
             error: () => {},
           },
+          artifactsDir: '/tmp/test-artifacts',
         }
       );
 
@@ -245,6 +246,7 @@ describe('ToolRegistry', () => {
               warn: () => {},
               error: () => {},
             },
+            artifactsDir: '/tmp/test-artifacts',
           }
         )
       ).rejects.toThrow('Tool not found');
@@ -266,6 +268,7 @@ describe('ToolRegistry', () => {
         { input: 'test' },
         {
           logger: contextLogger,
+          artifactsDir: '/tmp/test-artifacts',
         }
       );
 

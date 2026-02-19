@@ -56,7 +56,7 @@ export class BashTool extends BaseTool<any, BashOutput> {
   private logger = getLogger();
 
   private getArtifactsDir(ctx: ToolContext): string {
-    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+    return resolve(ctx.artifactsDir);
   }
 
   /**

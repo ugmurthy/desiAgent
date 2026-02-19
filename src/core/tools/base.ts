@@ -25,7 +25,20 @@ export interface ToolContext {
   abortSignal?: AbortSignal;
   executionId?: string;
   subStepId?: string;
-  artifactsDir?: string;
+  artifactsDir: string;
+  smtp?: {
+    host: string | undefined;
+    port: number;
+    user: string | undefined;
+    pass: string | undefined;
+    from: string | undefined;
+  };
+  imap?: {
+    host: string | undefined;
+    port: number;
+    user: string | undefined;
+    pass: string | undefined;
+  };
   emitEvent?: {
     started?: (message: string) => void;
     progress?: (message: string) => void;

@@ -46,7 +46,7 @@ export class GrepTool extends BaseTool<any, GrepOutput> {
   inputSchema: any = grepInputSchema;
 
   private getArtifactsDir(ctx: ToolContext): string {
-    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+    return resolve(ctx.artifactsDir);
   }
 
   private isBinaryFile(buffer: Buffer): boolean {

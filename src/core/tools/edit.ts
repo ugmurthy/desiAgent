@@ -30,7 +30,7 @@ export class EditTool extends BaseTool<any, EditOutput> {
   inputSchema: any = editInputSchema;
 
   private getArtifactsDir(ctx: ToolContext): string {
-    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+    return resolve(ctx.artifactsDir);
   }
 
   async execute(input: EditInput, ctx: ToolContext): Promise<EditOutput> {

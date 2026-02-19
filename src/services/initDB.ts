@@ -172,7 +172,7 @@ FROM dag_executions e
 LEFT JOIN dags d ON e.dag_id = d.id;`;
 }
 
-function generateAllSQL(): { sql: string; tableNames: string[] } {
+export function generateAllSQL(): { sql: string; tableNames: string[] } {
   const tables: SQLiteTable[] = [
     schema.agents,
     schema.dags,
@@ -195,7 +195,7 @@ function generateAllSQL(): { sql: string; tableNames: string[] } {
   return { sql: statements.join('\n\n'), tableNames };
 }
 
-function seedAgents(sqlite: Database): number {
+export function seedAgents(sqlite: Database): number {
   const insertStmt = sqlite.prepare(`
     INSERT INTO agents (id, name, version, prompt_template, provider, model, active, metadata, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

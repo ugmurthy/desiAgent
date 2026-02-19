@@ -39,7 +39,7 @@ export class GlobTool extends BaseTool<any, GlobOutput> {
   inputSchema: any = globInputSchema;
 
   private getArtifactsDir(ctx: ToolContext): string {
-    return resolve(ctx.artifactsDir || process.env.ARTIFACTS_DIR || './artifacts');
+    return resolve(ctx.artifactsDir);
   }
 
   async execute(input: GlobInput, ctx: ToolContext): Promise<GlobOutput> {
