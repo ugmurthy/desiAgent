@@ -1,3 +1,21 @@
 ## Codebase Patterns
+- gray-matter has no bundled types; a custom declaration lives at src/types/gray-matter.d.ts
+- Use `getLogger()` from `../../util/logger.js` for logging (pino-based)
+- tsconfig uses `moduleResolution: node` — avoid `/*` globs inside JSDoc block comments (TS parses them as paths)
+- Pre-existing test failures exist (9 files, 35 tests) on main — do not block on them
 
+---
+
+## 2026-03-03 - US-001, US-002, US-003, US-004
+Thread: https://ampcode.com/threads/T-019cb2a6-faef-7281-8bae-454d8918b8a5
+- US-001: Installed gray-matter dependency via `bun add gray-matter`
+- US-002: Added `workspaceRoot` to DesiAgentConfigSchema (default process.cwd()), DesiAgentConfig interface, ResolvedConfig, and resolveConfig()
+- US-003: Added `'skill'` to action_type enum in both SubTaskSchema (zod) and SubTask interface (dagExecutor.ts)
+- US-004: Created `src/core/skills/registry.ts` with SkillRegistry class, SkillMeta interface, SkillFrontmatterSchema zod schema, multi-location discovery, first-match-wins priority, name/dir validation, lazy loadContent(), getAll/getByName/getFormattedList
+- Created `src/types/gray-matter.d.ts` type declaration for gray-matter
+- Files changed: package.json, bun.lock, src/types/config.ts, src/types/dag.ts, src/core/execution/dagExecutor.ts, src/core/skills/registry.ts, src/types/gray-matter.d.ts
+- **Learnings for future iterations:**
+  - gray-matter returns `{ data, content }` where `data` is the parsed frontmatter and `content` is the body
+  - The codebase uses `resolve()` from `path` extensively; keep imports minimal (noUnusedLocals is on)
+  - 9 test files have pre-existing failures — compare against main to confirm before investigating
 ---

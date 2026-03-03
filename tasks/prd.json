@@ -1,0 +1,230 @@
+{
+  "project": "desiAgent",
+  "branchName": "ralph/skills-system",
+  "description": "File-Based Skills System - Discover SKILL.md files, inject skill context into decomposer, and execute skill-augmented LLM calls during DAG execution",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Install gray-matter dependency",
+      "description": "As a developer, I need the gray-matter package installed so that SKILL.md frontmatter can be parsed.",
+      "acceptanceCriteria": [
+        "gray-matter added to dependencies in package.json",
+        "bun install completes without errors",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Add workspaceRoot to config",
+      "description": "As a developer, I want an optional workspaceRoot field in DesiAgentConfig and ResolvedConfig so that skill discovery can locate workspace-relative skill directories.",
+      "acceptanceCriteria": [
+        "DesiAgentConfig interface in src/types/config.ts gains optional workspaceRoot?: string",
+        "DesiAgentConfigSchema Zod schema includes workspaceRoot with default process.cwd()",
+        "ResolvedConfig includes workspaceRoot: string",
+        "resolveConfig() resolves workspaceRoot into the frozen config object",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Add skill to DAG action_type enum",
+      "description": "As a developer, I need the action_type enum in the DAG schema to include 'skill' so the decomposer can produce skill-typed sub-tasks.",
+      "acceptanceCriteria": [
+        "src/types/dag.ts: SubTaskSchema.action_type updated to z.enum(['tool', 'inference', 'skill'])",
+        "src/core/execution/dagExecutor.ts: SubTask interface action_type updated to 'tool' | 'inference' | 'skill'",
+        "Existing tests still pass (bun run test)",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Create SkillRegistry with multi-location discovery",
+      "description": "As a developer, I want a SkillRegistry class in src/core/skills/registry.ts that discovers SKILL.md files from multiple locations so that skills are automatically found at startup.",
+      "acceptanceCriteria": [
+        "SkillMeta interface defined with fields: name, description, type ('context' | 'executable'), filePath, source, optional model, optional provider",
+        "SkillFrontmatterSchema Zod schema validates frontmatter with: name (string, min 1), description (string, min 10), type (enum 'context' | 'executable', default 'context'), optional model, optional provider",
+        "discover() scans these locations in priority order: .agents/skills/*/SKILL.md, skills/*/SKILL.md, root SKILL.md, ~/.config/agents/skills/*/SKILL.md, ~/.desiAgent/skills/*/SKILL.md",
+        "First-match wins on name conflicts across locations",
+        "Frontmatter name must match the directory name (warn and skip on mismatch); root SKILL.md is exempt",
+        "Invalid or missing frontmatter logs a warning but does not crash discovery",
+        "Only frontmatter is parsed during discovery — body content is loaded lazily via loadContent(name)",
+        "getAll() returns all discovered SkillMeta[]",
+        "getByName(name) returns a single SkillMeta or undefined",
+        "getFormattedList() returns a formatted string listing all skills for prompt injection",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Create MinimalSkillDetector",
+      "description": "As a developer, I want a MinimalSkillDetector class in src/core/skills/detector.ts that matches goal text to relevant skills so that only applicable skills are flagged during decomposition.",
+      "acceptanceCriteria": [
+        "SkillDetector interface defined with method detect(goalText: string, skills: SkillMeta[]): string[]",
+        "MinimalSkillDetector implements SkillDetector",
+        "Detects explicit triggers: 'use skill <name>', '--skill <name>', 'load skill <name>' (case-insensitive)",
+        "Falls back to case-insensitive keyword matching of skill name and description words against goal text tokens",
+        "Returns deduplicated matched skill names",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Unit tests for SkillRegistry",
+      "description": "As a developer, I want comprehensive unit tests for SkillRegistry to verify discovery, priority, validation, and lazy loading behavior.",
+      "acceptanceCriteria": [
+        "Test file at src/__tests__/skills/registry.test.ts",
+        "Tests use a temp directory with mock SKILL.md files",
+        "Test: discovers skills from .agents/skills/ subdirectories",
+        "Test: higher-priority location wins on name conflict",
+        "Test: skips skills with name/directory mismatch (logs warning)",
+        "Test: skips skills with invalid/missing frontmatter (logs warning, no crash)",
+        "Test: loadContent() returns the markdown body (not frontmatter)",
+        "Test: getFormattedList() returns formatted string with all skills",
+        "Test: getByName() returns correct skill or undefined",
+        "All tests pass (bun run test)"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Unit tests for MinimalSkillDetector",
+      "description": "As a developer, I want unit tests for MinimalSkillDetector to verify explicit trigger parsing and keyword matching.",
+      "acceptanceCriteria": [
+        "Test file at src/__tests__/skills/detector.test.ts",
+        "Test: 'use skill cataloging-apis' returns ['cataloging-apis']",
+        "Test: '--skill cataloging-apis' returns ['cataloging-apis']",
+        "Test: 'load skill cataloging-apis' returns ['cataloging-apis']",
+        "Test: goal text containing skill description keywords returns matching skill names",
+        "Test: unrelated goal text returns empty array",
+        "Test: duplicate matches are deduplicated",
+        "Test: matching is case-insensitive",
+        "All tests pass (bun run test)"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Update DecomposerV8 prompt with skills section",
+      "description": "As a developer, I want the DecomposerV8 agent prompt in seed/agents.json to include a {{skills}} placeholder so the LLM knows about available skills when generating a plan.",
+      "acceptanceCriteria": [
+        "DecomposerV8 prompt_template in seed/agents.json includes a new numbered section describing available skills",
+        "Section instructs the LLM: when a sub-task aligns with a skill description, set action_type to 'skill' and tool_or_prompt.name to the skill name",
+        "Section states skill tasks are executed as LLM inference with skill instructions as system context",
+        "Section states only skills from the provided {{skills}} list should be used",
+        "No changes to DecomposerV7 or other agents",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Wire SkillRegistry into DAGsService",
+      "description": "As a developer, I want DAGsService to accept a SkillRegistry, detect relevant skills during createFromGoal(), and replace {{skills}} in the system prompt so decomposition is skill-aware.",
+      "acceptanceCriteria": [
+        "DAGsServiceDeps interface gains optional skillRegistry?: SkillRegistry",
+        "DAGsService constructor stores skillRegistry",
+        "createFromGoal() uses MinimalSkillDetector to detect skills from goal text",
+        "Detected skill names are logged via this.logger.info",
+        "{{skills}} placeholder in the system prompt is replaced with skillRegistry.getFormattedList() (or empty string if no registry)",
+        "Existing tests still pass",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Add skill execution branch in DAGExecutor",
+      "description": "As a developer, I want the DAGExecutor to handle action_type === 'skill' sub-tasks by loading the skill content and executing it via LlmExecuteTool (for context skills) or dynamic import (for executable skills).",
+      "acceptanceCriteria": [
+        "DAGExecutorConfig gains optional skillRegistry?: SkillRegistry",
+        "When action_type === 'skill' and type === 'context': loads SKILL.md body via skillRegistry.loadContent(), builds an inference prompt, resolves provider/model from skill frontmatter (falling back to inference agent), and calls LlmExecuteTool.execute() with skill body as the task (system context)",
+        "When action_type === 'skill' and type === 'executable': dynamically imports handler.ts from the skill directory and invokes the default or named handler export with tool_or_prompt.params",
+        "If skillRegistry is not configured but a skill task is encountered, throws an error with message 'Skill \"<name>\" requested but no SkillRegistry configured'",
+        "If the named skill is not found, throws an error with message 'Skill not found: <name>'",
+        "If an executable skill is missing handler.ts, throws an error with message 'Skill \"<name>\" is not executable or missing handler'",
+        "On any skill execution failure, the sub-task is marked as failed and the DAG execution fails",
+        "Result includes content, usage, costUsd, and generationStats fields",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Initialize SkillRegistry in setupDesiAgent and export skill types",
+      "description": "As a developer, I want setupDesiAgent() to create a SkillRegistry, run discovery, pass it to DAGsService and DAGExecutor, and export skill types from the library entry point.",
+      "acceptanceCriteria": [
+        "setupDesiAgent() in src/index.ts creates a SkillRegistry with resolved.workspaceRoot",
+        "Calls skillRegistry.discover() and logs the count of discovered skills",
+        "Passes skillRegistry to DAGsService constructor deps",
+        "DAGsService passes skillRegistry through to DAGExecutor when creating executors",
+        "src/index.ts exports SkillRegistry and type SkillMeta from ./core/skills/registry.js",
+        "src/index.ts exports MinimalSkillDetector and type SkillDetector from ./core/skills/detector.js",
+        "Exports are accessible after bun run build",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Integration test — end-to-end skill discovery and detection",
+      "description": "As a developer, I want an integration test that verifies a skill sub-task flows from discovery through detection using the existing cataloging-apis skill.",
+      "acceptanceCriteria": [
+        "Test file at src/__tests__/skills/integration.test.ts",
+        "Uses the existing .agents/skills/cataloging-apis/SKILL.md skill",
+        "Verifies SkillRegistry.discover() finds cataloging-apis",
+        "Verifies MinimalSkillDetector.detect() selects it for a relevant goal",
+        "Verifies getFormattedList() includes cataloging-apis in output",
+        "All tests pass (bun run test)"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Integration test — executable skill execution from ~/.desiAgent/skills",
+      "description": "As a developer, I want an integration test that verifies the git-expert executable skill in ~/.desiAgent/skills/git-expert/ is discovered, detected, and its handler.ts executes successfully.",
+      "acceptanceCriteria": [
+        "Test file at src/__tests__/skills/executable-skill.test.ts",
+        "SkillRegistry.discover() finds git-expert from the ~/.desiAgent/skills/ location with source 'global'",
+        "git-expert skill has type: 'executable' (the schema should handle missing type field gracefully or the test documents that the skill needs type: executable in its frontmatter)",
+        "MinimalSkillDetector.detect() selects git-expert for a goal like 'check git status of the repo'",
+        "handler.ts is dynamically imported via import(`file://${handlerPath}`)",
+        "Handler is invoked with { command: 'status' } and returns a string containing git status output",
+        "Handler is invoked with { command: 'log --oneline -5' } and returns recent commit log output",
+        "Handler returns an error string (not a thrown exception) when given an invalid command",
+        "All tests pass (bun run test)"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
