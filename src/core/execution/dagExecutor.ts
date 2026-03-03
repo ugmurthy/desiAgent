@@ -16,6 +16,7 @@ import { LlmExecuteTool } from '../tools/llmExecute.js';
 import { ExecutionsService } from './executions.js';
 import { ExecutionEventType } from '../../types/execution.js';
 import { getLogger } from '../../util/logger.js';
+import type { SkillRegistry } from '../skills/registry.js';
 
 
 export interface SubTask {
@@ -62,6 +63,7 @@ export interface DAGExecutorConfig {
   apiKey?: string;
   ollamaBaseUrl?: string;
   skipGenerationStats?: boolean;
+  skillRegistry?: SkillRegistry;
 }
 
 /**
@@ -122,6 +124,7 @@ export class DAGExecutor {
   private apiKey?: string;
   private ollamaBaseUrl?: string;
   private skipGenerationStats?: boolean;
+  private skillRegistry?: SkillRegistry;
   private logger = getLogger();
 
   constructor(config: DAGExecutorConfig) {
@@ -132,6 +135,7 @@ export class DAGExecutor {
     this.apiKey = config.apiKey;
     this.ollamaBaseUrl = config.ollamaBaseUrl;
     this.skipGenerationStats = config.skipGenerationStats;
+    this.skillRegistry = config.skillRegistry;
 
     this.logger.debug({
       provider: this.llmProvider.name,
@@ -558,6 +562,75 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             provider: agent.provider,
             model: agent.model,
             task: agent.promptTemplate,
+            prompt: fullPrompt,
+          }, toolCtx);
+
+          return {
+            content: result.content,
+            usage: result.usage,
+            costUsd: result.costUsd,
+            generationStats: result.generationStats,
+          };
+        } else if (task.action_type === 'skill') {
+          const skillName = task.tool_or_prompt.name;
+
+          if (!this.skillRegistry) {
+            throw new Error(`Skill "${skillName}" requested but no SkillRegistry configured`);
+          }
+
+          const skillMeta = this.skillRegistry.getByName(skillName);
+          if (!skillMeta) {
+            throw new Error(`Skill not found: ${skillName}`);
+          }
+
+          if (skillMeta.type === 'executable') {
+            const handlerPath = skillMeta.filePath.replace(/SKILL\.md$/, 'handler.ts');
+            try {
+              const mod = await import(`file://${handlerPath}`);
+              const handler = mod.default || mod.handler;
+              if (!handler) {
+                throw new Error(`Skill "${skillName}" is not executable or missing handler`);
+              }
+              const handlerResult = await handler(task.tool_or_prompt.params || {});
+              return { content: handlerResult };
+            } catch (err) {
+              if (err instanceof Error && err.message.includes('is not executable or missing handler')) {
+                throw err;
+              }
+              throw new Error(`Skill "${skillName}" is not executable or missing handler`);
+            }
+          }
+
+          // Context skill: load content and run via LlmExecuteTool
+          const skillBody = await this.skillRegistry.loadContent(skillName);
+          if (!skillBody) {
+            throw new Error(`Skill not found: ${skillName}`);
+          }
+
+          const fullPrompt = this.buildInferencePrompt(task, globalContext, taskResults);
+
+          // Resolve provider/model from skill frontmatter, falling back to inference agent
+          let skillProvider: 'openai' | 'openrouter' | 'ollama' = 'openai';
+          let skillModel = 'gpt-4o';
+
+          if (skillMeta.provider && skillMeta.model) {
+            skillProvider = skillMeta.provider as 'openai' | 'openrouter' | 'ollama';
+            skillModel = skillMeta.model;
+          } else {
+            // Fall back to inference agent from cache
+            const inferenceAgent = agentCache.get(task.tool_or_prompt.name) || agentCache.values().next().value;
+            if (inferenceAgent) {
+              skillProvider = inferenceAgent.provider;
+              skillModel = inferenceAgent.model;
+            }
+          }
+
+          const llmExecuteTool = new LlmExecuteTool({ apiKey: this.apiKey, baseUrl: this.ollamaBaseUrl, skipGenerationStats: this.skipGenerationStats });
+
+          const result = await llmExecuteTool.execute({
+            provider: skillProvider,
+            model: skillModel,
+            task: skillBody,
             prompt: fullPrompt,
           }, toolCtx);
 
