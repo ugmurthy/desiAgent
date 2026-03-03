@@ -27,6 +27,8 @@ import { createLLMProvider } from '../providers/factory.js';
 import { LlmExecuteTool } from '../tools/llmExecute.js';
 import type { AgentsService } from './agents.js';
 import { DAGExecutor, type ExecutionConfig } from './dagExecutor.js';
+import type { SkillRegistry } from '../skills/registry.js';
+import { MinimalSkillDetector } from '../skills/detector.js';
 
 export function generateDAGId(): string {
   return `dag_${nanoid(21)}`;
@@ -62,6 +64,7 @@ export interface DAGsServiceDeps {
   apiKey?: string;
   ollamaBaseUrl?: string;
   skipGenerationStats?: boolean;
+  skillRegistry?: SkillRegistry;
 }
 
 export interface CreateDAGFromGoalOptions {
@@ -161,6 +164,7 @@ export class DAGsService {
   private apiKey?: string;
   private ollamaBaseUrl?: string;
   private skipGenerationStats?: boolean;
+  private skillRegistry?: SkillRegistry;
   private logger = getLogger();
 
   constructor(deps: DAGsServiceDeps) {
@@ -174,6 +178,7 @@ export class DAGsService {
     this.apiKey = deps.apiKey;
     this.ollamaBaseUrl = deps.ollamaBaseUrl;
     this.skipGenerationStats = deps.skipGenerationStats;
+    this.skillRegistry = deps.skillRegistry;
   }
 
   private buildGlobalContext(job: DecomposerJob): { formatted: string; totalTasks: number } {
@@ -342,10 +347,21 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       this.logger.debug('Using default LLM provider');
     }
 
+    // Detect relevant skills and build skills list for prompt injection
+    const skillsList = this.skillRegistry ? this.skillRegistry.getFormattedList() : '';
+    if (this.skillRegistry) {
+      const detector = new MinimalSkillDetector();
+      const detectedSkills = detector.detect(goalText, this.skillRegistry.getAll());
+      if (detectedSkills.length > 0) {
+        this.logger.info({ detectedSkills }, 'Skills detected for goal');
+      }
+    }
+
     const toolDefinitions = this.toolRegistry.getAllDefinitions();
     const systemPrompt = agent.systemPrompt
       .replace(/\{\{tools\}\}/g, JSON.stringify(toolDefinitions))
-      .replace(/\{\{currentDate\}\}/g, new Date().toLocaleString());
+      .replace(/\{\{currentDate\}\}/g, new Date().toLocaleString())
+      .replace(/\{\{skills\}\}/g, skillsList);
     if (systemPrompt.length < 100) {
       this.logger.warn('System prompt is empty after replacement');
       throw new ValidationError('System prompt seems short! ', 'systemPrompt', systemPrompt);
