@@ -60,6 +60,7 @@
     "cronstrue": "^3.9.0",
     "drizzle-orm": "^0.45.1",
     "glob": "^13.0.0",
+    "gray-matter": "^4.0.3",
     "imapflow": "^1.2.7",
     "lodash": "^4.17.21",
     "mailparser": "^3.9.1",
