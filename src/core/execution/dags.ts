@@ -988,6 +988,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       apiKey: this.apiKey,
       ollamaBaseUrl: this.ollamaBaseUrl,
       skipGenerationStats: this.skipGenerationStats,
+      skillRegistry: this.skillRegistry,
     });
 
     // Start execution in background - don't await
@@ -1072,6 +1073,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       apiKey: this.apiKey,
       ollamaBaseUrl: this.ollamaBaseUrl,
       skipGenerationStats: this.skipGenerationStats,
+      skillRegistry: this.skillRegistry,
     });
 
     // Start execution in background - don't await

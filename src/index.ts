@@ -26,6 +26,7 @@ import { ArtifactsService } from './core/execution/artifacts.js';
 import { CostsService } from './core/execution/costs.js';
 import { createToolRegistry, ToolExecutor } from './core/tools/index.js';
 import { createLLMProvider, validateLLMSetup } from './core/providers/factory.js';
+import { SkillRegistry } from './core/skills/registry.js';
 
 /**
  * DesiAgent client implementation
@@ -150,6 +151,11 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     });
     await validateLLMSetup(llmProvider, resolved.modelName);
 
+    // Initialize SkillRegistry and discover skills
+    const skillRegistry = new SkillRegistry(resolved.workspaceRoot);
+    await skillRegistry.discover();
+    logger.info({ skillCount: skillRegistry.getAll().length }, 'Skills discovered');
+
     // Initialize DAGs service
     const dagsService = new DAGsService({
       db,
@@ -161,6 +167,7 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       apiKey: resolved.apiKey,
       ollamaBaseUrl: resolved.ollamaBaseUrl,
       skipGenerationStats: resolved.skipGenerationStats,
+      skillRegistry,
     });
 
     // Initialize artifacts service
@@ -330,6 +337,10 @@ export {
   type SendEmailInput,
   type SendEmailOutput,
 } from './util/sendEmailTool.js';
+
+// Skills
+export { SkillRegistry, type SkillMeta } from './core/skills/registry.js';
+export { MinimalSkillDetector, type SkillDetector } from './core/skills/detector.js';
 
 // Database initialization
 export { initDB, seedAgents, type InitDBOptions, type InitDBResult } from './services/initDB.js';
