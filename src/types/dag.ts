@@ -7,7 +7,7 @@ export const SubTaskSchema = z.object({
   id: z.string(),
   description: z.string(),
   thought: z.string(),
-  action_type: z.enum(['tool', 'inference']),
+  action_type: z.enum(['tool', 'inference', 'skill']),
   tool_or_prompt: z.object({
     name: z.string(),
     params: z.record(z.any()).optional(),

@@ -22,7 +22,7 @@ export interface SubTask {
   id: string;
   description: string;
   thought: string;
-  action_type: 'tool' | 'inference';
+  action_type: 'tool' | 'inference' | 'skill';
   tool_or_prompt: {
     name: string;
     params?: Record<string, any>;
