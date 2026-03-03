@@ -3,6 +3,7 @@
 - Use `getLogger()` from `../../util/logger.js` for logging (pino-based)
 - tsconfig uses `moduleResolution: node` — avoid `/*` globs inside JSDoc block comments (TS parses them as paths)
 - Pre-existing test failures exist (9 files, 35 tests) on main — do not block on them
+- SkillRegistry tests must mock `os.homedir` (via `vi.mock('os', ...)`) to avoid discovering real global skills
 
 ---
 
@@ -18,4 +19,17 @@ Thread: https://ampcode.com/threads/T-019cb2a6-faef-7281-8bae-454d8918b8a5
   - gray-matter returns `{ data, content }` where `data` is the parsed frontmatter and `content` is the body
   - The codebase uses `resolve()` from `path` extensively; keep imports minimal (noUnusedLocals is on)
   - 9 test files have pre-existing failures — compare against main to confirm before investigating
+---
+
+## 2026-03-03 - US-005, US-006, US-007, US-008
+Thread: https://ampcode.com/threads/T-019cb2b7-cedb-752a-a688-e07c654a3da3
+- US-005: Created `src/core/skills/detector.ts` with SkillDetector interface and MinimalSkillDetector class — explicit trigger parsing (`use skill`, `--skill`, `load skill`) + keyword fallback with stop-word filtering
+- US-006: Created `src/__tests__/skills/registry.test.ts` — 9 tests covering discovery, priority, mismatch, invalid frontmatter, loadContent, getFormattedList, getByName; uses mocked homedir to isolate from real global skills
+- US-007: Created `src/__tests__/skills/detector.test.ts` — 9 tests covering explicit triggers, keyword matching, deduplication, case-insensitivity, multiple skill matching
+- US-008: Added `{{skills}}` section (item 7) to DecomposerV8 prompt_template in seed/agents.json; instructs LLM to set action_type='skill' for matching sub-tasks
+- Files changed: src/core/skills/detector.ts, src/__tests__/skills/registry.test.ts, src/__tests__/skills/detector.test.ts, seed/agents.json
+- **Learnings for future iterations:**
+  - SkillRegistry.discover() scans global dirs (homedir); tests must mock `os.homedir` to avoid picking up real skills
+  - The tokenizer splits on hyphens, so "cataloging-apis" becomes tokens ["cataloging", "apis"] — both match independently
+  - "production" matches "production-grade" via tokenization — use truly unrelated text in negative tests
 ---
