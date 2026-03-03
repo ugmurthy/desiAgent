@@ -43,6 +43,9 @@ export const DesiAgentConfigSchema = z.object({
   onExecutionStart: z.function().optional(),
   onExecutionEnd: z.function().optional(),
 
+  // Workspace root for skill discovery
+  workspaceRoot: z.string().optional().default(() => process.cwd()),
+
   // Feature flags
   autoStartScheduler: z.boolean().optional().default(true),
   enableToolValidation: z.boolean().optional().default(true),
@@ -87,6 +90,9 @@ export interface DesiAgentConfig {
   onExecutionStart?: (executionId: string) => void;
   onExecutionEnd?: (executionId: string, result: Record<string, any>) => void;
 
+  // Workspace root for skill discovery
+  workspaceRoot?: string;
+
   // Feature flags
   autoStartScheduler?: boolean;
   enableToolValidation?: boolean;
@@ -104,6 +110,8 @@ export interface ResolvedConfig {
   ollamaBaseUrl: string;
 
   agentDefinitionsPath: string;
+
+  workspaceRoot: string;
 
   logLevel: LogLevel;
   logDest: 'console' | 'file' | 'both';
@@ -177,6 +185,8 @@ export function resolveConfig(validated: z.infer<typeof DesiAgentConfigSchema>):
     ollamaBaseUrl: validated.ollamaBaseUrl || 'http://localhost:11434',
 
     agentDefinitionsPath: validated.agentDefinitionsPath,
+
+    workspaceRoot: validated.workspaceRoot,
 
     logLevel: validated.logLevel as LogLevel,
     logDest,
