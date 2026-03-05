@@ -4,6 +4,8 @@
 - tsconfig uses `moduleResolution: node` — avoid `/*` globs inside JSDoc block comments (TS parses them as paths)
 - Pre-existing test failures exist (9 files, 35 tests) on main — do not block on them
 - SkillRegistry tests must mock `os.homedir` (via `vi.mock('os', ...)`) to avoid discovering real global skills
+- SKILL.md files must start with `---` as the first line — no content (e.g. HTML comments) before frontmatter
+- Executable skill handlers should use Node `child_process` (not Bun.spawn) since vitest runs under Node
 
 ---
 
@@ -32,4 +34,30 @@ Thread: https://ampcode.com/threads/T-019cb2b7-cedb-752a-a688-e07c654a3da3
   - SkillRegistry.discover() scans global dirs (homedir); tests must mock `os.homedir` to avoid picking up real skills
   - The tokenizer splits on hyphens, so "cataloging-apis" becomes tokens ["cataloging", "apis"] — both match independently
   - "production" matches "production-grade" via tokenization — use truly unrelated text in negative tests
+---
+
+## 2026-03-03 - US-009, US-010, US-011, US-012
+Thread: https://ampcode.com/threads/T-019cb2c3-6fba-776d-bba6-cd94b4881a71
+- US-009: Wired SkillRegistry into DAGsService — added optional skillRegistry to DAGsServiceDeps, MinimalSkillDetector detection in createFromGoal(), {{skills}} replacement in system prompt
+- US-010: Added skill execution branch in DAGExecutor — context skills load SKILL.md body + run via LlmExecuteTool, executable skills dynamically import handler.ts; proper error messages for missing registry/skill/handler
+- US-011: Initialized SkillRegistry in setupDesiAgent(), passed it through to DAGsService→DAGExecutor, exported SkillRegistry/SkillMeta/MinimalSkillDetector/SkillDetector from index.ts
+- US-012: Created integration test at src/__tests__/skills/integration.test.ts — verifies cataloging-apis discovered from .agents/skills/, detected by MinimalSkillDetector, included in getFormattedList()
+- Files changed: src/core/execution/dags.ts, src/core/execution/dagExecutor.ts, src/index.ts, src/__tests__/skills/integration.test.ts
+- **Learnings for future iterations:**
+  - DAGExecutor creates new instances inside DAGsService methods (executeDAG, retryExecution) — both locations need skillRegistry passthrough
+  - Integration tests should mock os.homedir to avoid picking up real global skills
+  - `bun run build` (tsc) confirms dist/ exports are accessible
+---
+
+## 2026-03-03 - US-013
+Thread: https://ampcode.com/threads/T-019cb2e4-832e-705b-8a4b-f38b79ceb118
+- Created integration test at src/__tests__/skills/executable-skill.test.ts
+- Fixed ~/.desiAgent/skills/git-expert/SKILL.md: removed HTML comment before frontmatter (broke gray-matter parsing), added `type: executable` to frontmatter
+- Rewrote ~/.desiAgent/skills/git-expert/handler.ts to use Node `child_process.execFile` instead of `Bun.spawn` (vitest runs under Node)
+- Tests verify: discovery with source 'global', type 'executable', detector matching, handler execution for status/log/invalid commands
+- Files changed: src/__tests__/skills/executable-skill.test.ts, ~/.desiAgent/skills/git-expert/SKILL.md, ~/.desiAgent/skills/git-expert/handler.ts
+- **Learnings for future iterations:**
+  - SKILL.md must start with `---` as the very first line — any content before the frontmatter fence (e.g. HTML comments) breaks gray-matter parsing
+  - Handler files for executable skills should use Node-compatible APIs (child_process) rather than Bun-specific APIs since vitest runs under Node
+  - The SkillFrontmatterSchema defaults `type` to `'context'` — skills intended as executable must explicitly set `type: executable` in frontmatter
 ---

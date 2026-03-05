@@ -390,11 +390,13 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         temperature,
         maxTokens,
         abortSignal: options.abortSignal,
+        deferGenerationStats: true,
       });
 
       const attemptUsage = response.usage;
       const attemptCost = (response as any).costUsd;
       const attemptGenStats = (response as any).generationStats;
+      const attemptGenStatsPromise = response.generationStatsPromise;
 
       if (attemptUsage) {
         planningUsageTotal.promptTokens += attemptUsage.promptTokens ?? 0;
@@ -477,7 +479,6 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       }
 
       const usage = response.usage ?? null;
-      const generationStats = (response as any).generationStats ?? null;
       const validatedResult = DecomposerJobSchema.safeParse(result);
 
       if (!validatedResult.success) {
@@ -557,18 +558,12 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         const now = new Date();
         this.logger.info({ dagId }, 'DagID Generated for clarification');
 
-        const titleMasterPromise = this.generateTitleAsync(
-          activeLLMProvider,
-          goalText,
-          options.abortSignal
-        );
-
         const baseInsertData = {
           id: dagId,
           status: 'pending' as const,
           result: dag as any,
           usage: usage as any,
-          generationStats: generationStats,
+          generationStats: null as Record<string, any> | null,
           attempts: attempt,
           agentName,
           dagTitle: null as string | null,
@@ -591,32 +586,6 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           updatedAt: now,
         };
 
-        const titleResult = await titleMasterPromise;
-        if (titleResult) {
-          this.logger.info('TitleMaster generated Result for clarification');
-          baseInsertData.dagTitle = titleResult.title;
-
-          planningAttempts.push({
-            attempt,
-            reason: 'title_master',
-            usage: titleResult.usage,
-            costUsd: titleResult.costUsd,
-            generationStats: titleResult.generationStats,
-          });
-
-          if (titleResult.usage) {
-            planningUsageTotal.promptTokens += titleResult.usage.promptTokens ?? 0;
-            planningUsageTotal.completionTokens += titleResult.usage.completionTokens ?? 0;
-            planningUsageTotal.totalTokens += titleResult.usage.totalTokens ?? 0;
-          }
-          if (titleResult.costUsd != null) {
-            planningCostTotal += titleResult.costUsd;
-          }
-
-          baseInsertData.planningTotalUsage = planningUsageTotal;
-          baseInsertData.planningTotalCostUsd = planningCostTotal.toString();
-        }
-
         try {
           await this.db.insert(dags).values(baseInsertData);
         } catch (dbError) {
@@ -626,6 +595,10 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         }
 
         this.logger.info({ dagId, agentName, clarificationQuery: dag.clarification_query }, 'Clarification DAG saved to database');
+
+        // Fire-and-forget: update title and generation stats in the background
+        const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
+        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
         return {
           status: 'clarification_required',
@@ -640,20 +613,13 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         const dagId = generateDAGId();
         const now = new Date();
         this.logger.info({dagId},"DagID Generated")
-        // Run TitleMaster generation in parallel with preparing insert data
-        const titleMasterPromise = this.generateTitleAsync(
-          activeLLMProvider,
-          goalText,
-          options.abortSignal
-        );
-        
-        // Prepare base insert data (doesn't need title yet)
+
         const baseInsertData = {
           id: dagId,
           status: 'success' as const,
           result: dag as any,
           usage: usage as any,
-          generationStats: generationStats,
+          generationStats: null as Record<string, any> | null,
           attempts: attempt,
           agentName,
           dagTitle: null as string | null,
@@ -676,35 +642,6 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           updatedAt: now,
         };
 
-        // Wait for title generation (runs in parallel with data prep above)
-        const titleResult = await titleMasterPromise;
-       
-        if (titleResult) {
-          this.logger.info('TitleMaster generated Result');
-          baseInsertData.dagTitle = titleResult.title;
-          
-          planningAttempts.push({
-            attempt,
-            reason: 'title_master',
-            usage: titleResult.usage,
-            costUsd: titleResult.costUsd,
-            generationStats: titleResult.generationStats,
-          });
-
-          if (titleResult.usage) {
-            planningUsageTotal.promptTokens += titleResult.usage.promptTokens ?? 0;
-            planningUsageTotal.completionTokens += titleResult.usage.completionTokens ?? 0;
-            planningUsageTotal.totalTokens += titleResult.usage.totalTokens ?? 0;
-          }
-          if (titleResult.costUsd != null) {
-            planningCostTotal += titleResult.costUsd;
-          }
-          
-          // Update the totals in insert data
-          baseInsertData.planningTotalUsage = planningUsageTotal;
-          baseInsertData.planningTotalCostUsd = planningCostTotal.toString();
-        }
-        this.logger.info('Base insert data prepared');
         try {
           await this.db.insert(dags).values(baseInsertData);
         } catch (dbError) {
@@ -713,14 +650,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           throw new Error(`Database insert failed for DAG ${dagId}: ${errorMessage}`);
         }
 
-        this.logger.info({
-          dagId,
-          agentName,
-          goalText: showGoalText,
-          cronSchedule,
-          scheduleActive,
-          planningCost: planningCostTotal,
-        }, 'DAG saved to database');
+        this.logger.info({ dagId, agentName, goalText: showGoalText, cronSchedule, scheduleActive }, 'DAG saved to database');
 
         if (this.scheduler && cronSchedule && scheduleActive) {
           this.scheduler.registerDAGSchedule({
@@ -731,6 +661,10 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           });
           this.logger.info({ dagId, cronSchedule, timezone }, 'DAG schedule registered');
         }
+
+        // Fire-and-forget: update title and generation stats in the background
+        const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
+        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
         return { status: 'success', dagId };
       }
@@ -750,18 +684,12 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       const now = new Date();
       this.logger.info({ dagId }, 'DagID Generated for low-coverage DAG');
 
-      const titleMasterPromise = this.generateTitleAsync(
-        activeLLMProvider,
-        goalText,
-        options.abortSignal
-      );
-
       const baseInsertData = {
         id: dagId,
         status: 'success' as const,
         result: dag as any,
         usage: usage as any,
-        generationStats: generationStats,
+        generationStats: null as Record<string, any> | null,
         attempts: attempt,
         agentName,
         dagTitle: null as string | null,
@@ -784,32 +712,6 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         updatedAt: now,
       };
 
-      const titleResult = await titleMasterPromise;
-      if (titleResult) {
-        this.logger.info('TitleMaster generated Result for low-coverage DAG');
-        baseInsertData.dagTitle = titleResult.title;
-
-        planningAttempts.push({
-          attempt,
-          reason: 'title_master',
-          usage: titleResult.usage,
-          costUsd: titleResult.costUsd,
-          generationStats: titleResult.generationStats,
-        });
-
-        if (titleResult.usage) {
-          planningUsageTotal.promptTokens += titleResult.usage.promptTokens ?? 0;
-          planningUsageTotal.completionTokens += titleResult.usage.completionTokens ?? 0;
-          planningUsageTotal.totalTokens += titleResult.usage.totalTokens ?? 0;
-        }
-        if (titleResult.costUsd != null) {
-          planningCostTotal += titleResult.costUsd;
-        }
-
-        baseInsertData.planningTotalUsage = planningUsageTotal;
-        baseInsertData.planningTotalCostUsd = planningCostTotal.toString();
-      }
-
       try {
         await this.db.insert(dags).values(baseInsertData);
       } catch (dbError) {
@@ -819,6 +721,11 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       }
 
       this.logger.info({ dagId, agentName }, 'Low-coverage DAG saved to database');
+
+      // Fire-and-forget: update title and generation stats in the background
+      const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
+      this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
+
       return { status: 'success', dagId };
     }
 
@@ -865,7 +772,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
     const planningResult = await this.createFromGoal({
       goalText: augmentedGoalText,
-      agentName: params?.agentName || existingDag.agentName || 'Decomposer',
+      agentName: params?.agentName || existingDag.agentName || process.env.DEFAULT_DECOMPOSER_AGENT || 'DecomposerV8',
       provider: params?.provider,
       model: params?.model,
       temperature: params?.temperature ?? 0.7,
@@ -1566,6 +1473,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         temperature: 0.7,
         maxTokens: 100,
         abortSignal,
+        deferGenerationStats: true,
       });
 
       const title = titleResponse.content.trim();
@@ -1581,6 +1489,85 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       this.logger.error({ err: titleError }, 'Error calling TitleMaster');
       return null;
     }
+  }
+
+  /**
+   * Fire-and-forget: resolves generation stats + title in the background and updates the DAG row.
+   */
+  private backgroundUpdateDag(
+    dagId: string,
+    genStatsPromise: Promise<{ generationStats?: Record<string, any>; costUsd?: number }> | undefined,
+    titlePromise: Promise<{
+      title: string;
+      usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+      costUsd?: number;
+      generationStats?: Record<string, any>;
+    } | null>,
+    planningAttempts: PlanningAttempt[],
+    planningUsageTotal: PlanningUsageTotal,
+    planningCostTotal: number,
+    attempt: number,
+  ): void {
+    const run = async () => {
+      const updateData: Record<string, any> = {};
+
+      // Resolve main generation stats
+      if (genStatsPromise) {
+        try {
+          const stats = await genStatsPromise;
+          if (stats.generationStats) {
+            updateData.generationStats = stats.generationStats;
+          }
+          if (stats.costUsd != null) {
+            planningAttempts[planningAttempts.length - 1].costUsd = stats.costUsd;
+            planningAttempts[planningAttempts.length - 1].generationStats = stats.generationStats;
+            planningCostTotal += stats.costUsd;
+          }
+        } catch (err) {
+          this.logger.warn({ err, dagId }, 'Background: failed to fetch generation stats');
+        }
+      }
+
+      // Resolve title
+      try {
+        const titleResult = await titlePromise;
+        if (titleResult) {
+          updateData.dagTitle = titleResult.title;
+          planningAttempts.push({
+            attempt,
+            reason: 'title_master',
+            usage: titleResult.usage,
+            costUsd: titleResult.costUsd,
+            generationStats: titleResult.generationStats,
+          });
+          if (titleResult.usage) {
+            planningUsageTotal.promptTokens += titleResult.usage.promptTokens ?? 0;
+            planningUsageTotal.completionTokens += titleResult.usage.completionTokens ?? 0;
+            planningUsageTotal.totalTokens += titleResult.usage.totalTokens ?? 0;
+          }
+          if (titleResult.costUsd != null) {
+            planningCostTotal += titleResult.costUsd;
+          }
+        }
+      } catch (err) {
+        this.logger.warn({ err, dagId }, 'Background: failed to generate title');
+      }
+
+      // Update DB row
+      updateData.planningAttempts = planningAttempts;
+      updateData.planningTotalUsage = planningUsageTotal;
+      updateData.planningTotalCostUsd = planningCostTotal.toString();
+      updateData.updatedAt = new Date();
+
+      try {
+        await this.db.update(dags).set(updateData).where(eq(dags.id, dagId));
+        this.logger.info({ dagId, dagTitle: updateData.dagTitle }, 'Background: DAG updated with title and stats');
+      } catch (err) {
+        this.logger.error({ err, dagId }, 'Background: failed to update DAG row');
+      }
+    };
+
+    run().catch(err => this.logger.error({ err, dagId }, 'Background DAG update failed'));
   }
 
   private mapDAG(record: any): DAG {

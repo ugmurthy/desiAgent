@@ -10,7 +10,7 @@ const client = await setupDesiAgent({
 
 const result = await client.dags.createAndExecuteFromGoal({
   goalText: 'Research the top 5 trends in AI agents for 2025 and write a concise briefing document to ai-trends.md',
-  agentName: 'DecomposerV8',
+  agentName: process.env.DEFAULT_DECOMPOSER_AGENT || 'DecomposerV8',
   temperature: 0.7,
 });
 

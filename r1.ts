@@ -11,7 +11,7 @@ const client = await setupDesiAgent({
 // Step 1 — Plan
 const plan = await client.dags.createFromGoal({
   goalText: 'Create a tutorial on processing driftwood into handicrafts — cover cleaning, tools, finishes — and write it to driftwood.md',
-  agentName: 'DecomposerV8',
+  agentName: process.env.DEFAULT_DECOMPOSER_AGENT || 'DecomposerV8',
   temperature: 0.7,
 });
 

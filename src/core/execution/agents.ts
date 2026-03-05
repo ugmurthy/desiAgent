@@ -187,11 +187,25 @@ export class AgentsService {
     if (updates.systemPrompt !== undefined) {
       updateData.promptTemplate = updates.systemPrompt;
     }
-    if (updates.constraints?.maxTokens !== undefined) {
-      updateData.model = updates.constraints.maxTokens;
+    if (updates.provider !== undefined) {
+      updateData.provider = updates.provider;
     }
-    if (updates.metadata !== undefined) {
-      updateData.metadata = updates.metadata;
+    if (updates.model !== undefined) {
+      updateData.model = updates.model;
+    }
+    // Build metadata: if metadata is explicitly provided, it replaces existing;
+    // description and constraints are merged on top of existing metadata
+    if (updates.metadata !== undefined || updates.description !== undefined || updates.constraints !== undefined) {
+      const currentMetadata = (existing.metadata as Record<string, any>) || {};
+      const baseMetadata = updates.metadata !== undefined ? updates.metadata : currentMetadata;
+      updateData.metadata = {
+        ...baseMetadata,
+        ...(updates.constraints !== undefined ? { constraints: updates.constraints } : {}),
+        ...(updates.description !== undefined ? { description: updates.description } : {}),
+      };
+    }
+    if (updates.isActive !== undefined) {
+      updateData.active = updates.isActive;
     }
 
     await this.db.update(agents).set(updateData).where(eq(agents.id, id));

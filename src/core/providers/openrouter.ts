@@ -368,15 +368,22 @@ export class OpenRouterProvider implements LLMProvider {
       const usage = extractUsage(data);
       const content = data.choices[0]?.message?.content || '';
 
-      let generation_stats: { data?: Record<string, any>; error?: string } | undefined;
-      let costUsd: number | undefined;
-
-      if (!this.skipGenerationStats) {
-        generation_stats = await this.extractGenerationId(data);
-        costUsd = extractCostFromGenerationStats(generation_stats);
-      } else {
+      if (this.skipGenerationStats) {
         this.logger.debug('Skipping generation stats fetch (skipGenerationStats=true)');
+        return { content, usage };
       }
+
+      if (params.deferGenerationStats) {
+        this.logger.debug('Deferring generation stats fetch (deferGenerationStats=true)');
+        const generationStatsPromise = this.extractGenerationId(data).then(stats => ({
+          generationStats: stats?.data,
+          costUsd: extractCostFromGenerationStats(stats),
+        }));
+        return { content, usage, generationStatsPromise };
+      }
+
+      const generation_stats = await this.extractGenerationId(data);
+      const costUsd = extractCostFromGenerationStats(generation_stats);
 
       if (usage) {
         this.logger.debug({ usage, generation_stats, costUsd }, 'OpenRouter chat response metadata');

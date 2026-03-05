@@ -69,6 +69,8 @@ export interface ChatParams {
   temperature?: number;
   maxTokens?: number;
   abortSignal?: AbortSignal;
+  /** When true, return immediately without waiting for generation stats. Stats will be available via generationStatsPromise. */
+  deferGenerationStats?: boolean;
 }
 
 /**
@@ -79,6 +81,8 @@ export interface ChatResponse {
   usage?: UsageInfo;
   costUsd?: number;
   generationStats?: Record<string, any>;
+  /** When deferGenerationStats is true, this promise resolves with { generationStats, costUsd } once available. */
+  generationStatsPromise?: Promise<{ generationStats?: Record<string, any>; costUsd?: number }>;
 }
 
 /**

@@ -154,7 +154,9 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     // Initialize SkillRegistry and discover skills
     const skillRegistry = new SkillRegistry(resolved.workspaceRoot);
     await skillRegistry.discover();
-    logger.info({ skillCount: skillRegistry.getAll().length }, 'Skills discovered');
+    const allSkills = skillRegistry.getAll();
+    const skillNames = allSkills.map(s => s.name);
+    logger.info({ skillCount: allSkills.length, skillNames }, 'Skills discovered');
 
     // Initialize DAGs service
     const dagsService = new DAGsService({

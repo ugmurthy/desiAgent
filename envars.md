@@ -12,6 +12,7 @@
 | `ARTIFACTS_DIR` | `./artifacts` | Output directory for files |
 | `LOG_DEST` | `file` | Logging destination (`file` or `console`) |
 | `LOG_DIR` | `~/.desiAgent/logs` | Log file directory |
+| `DEFAULT_DECOMPOSER_AGENT` | `DecomposerV8` | Default decomposer agent name |
 | `HOME` / `USERPROFILE` | - | User home directory (system) |
 | `SMTP_HOST` | - | SMTP server hostname |
 | `SMTP_PORT` | `587` | SMTP server port |

@@ -101,7 +101,7 @@ async function main() {
     console.log('Creating DAG from goal...\n');
     const createResult = await client.dags.createFromGoal({
       goalText: goal,
-      agentName: 'DecomposerV8',
+      agentName: process.env.DEFAULT_DECOMPOSER_AGENT || 'DecomposerV8',
       temperature: 0.7,
     });
 
