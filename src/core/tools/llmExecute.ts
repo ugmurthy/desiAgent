@@ -42,6 +42,7 @@ interface LlmExecuteOutput {
   };
   costUsd?: number;
   generationStats?: Record<string, any>;
+  generationId?: string;
   finishReason?: string;
   reasoning?: string;
 }
@@ -186,6 +187,7 @@ export class LlmExecuteTool extends BaseTool<LlmExecuteInput, LlmExecuteOutput> 
         usage: response.usage,
         costUsd: (response as any).costUsd,
         generationStats: (response as any).generationStats,
+        generationId: response.generationId,
       };
     } catch (error) {
       ctx.logger.error({

@@ -27,6 +27,7 @@ import { CostsService } from './core/execution/costs.js';
 import { createToolRegistry, ToolExecutor } from './core/tools/index.js';
 import { createLLMProvider, validateLLMSetup } from './core/providers/factory.js';
 import { SkillRegistry } from './core/skills/registry.js';
+import { StatsQueue } from './core/workers/statsQueue.js';
 
 /**
  * DesiAgent client implementation
@@ -41,6 +42,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
   version: string = packageJson.version;
   private logger = getLogger();
   private isMemoryDb: boolean;
+  private statsQueue?: StatsQueue;
 
   constructor(
     agents: AgentsService,
@@ -49,7 +51,8 @@ class DesiAgentClientImpl implements DesiAgentClient {
     tools: ToolsService,
     artifacts: ArtifactsService,
     costs: CostsService,
-    isMemoryDb: boolean = false
+    isMemoryDb: boolean = false,
+    statsQueue?: StatsQueue,
   ) {
     this.agents = agents;
     this.dags = dags;
@@ -58,6 +61,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
     this.artifacts = artifacts;
     this.costs = costs;
     this.isMemoryDb = isMemoryDb;
+    this.statsQueue = statsQueue;
   }
 
   async executeTask(_agent: any, _task: string, _files?: Buffer[]): Promise<any> {
@@ -69,6 +73,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
     if (this.isMemoryDb) {
       this.logger.warn('Shutting down in-memory database — all data will be lost');
     }
+    await this.statsQueue?.terminate();
     this.logger.info('Shutting down desiAgent');
     closeDatabase();
   }
@@ -158,6 +163,14 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     const skillNames = allSkills.map(s => s.name);
     logger.info({ skillCount: allSkills.length, skillNames }, 'Skills discovered');
 
+    // Initialize background stats worker for OpenRouter
+    let statsQueue: StatsQueue | undefined;
+    if (resolved.llmProvider === 'openrouter' && !resolved.skipGenerationStats && resolved.apiKey) {
+      statsQueue = new StatsQueue(resolved.databasePath, resolved.apiKey);
+      statsQueue.start();
+      logger.info('Background stats worker started for OpenRouter');
+    }
+
     // Initialize DAGs service
     const dagsService = new DAGsService({
       db,
@@ -170,6 +183,7 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       ollamaBaseUrl: resolved.ollamaBaseUrl,
       skipGenerationStats: resolved.skipGenerationStats,
       skillRegistry,
+      statsQueue,
     });
 
     // Initialize artifacts service
@@ -187,6 +201,7 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       artifactsService,
       costsService,
       resolved.isMemoryDb,
+      statsQueue,
     );
 
     logger.info('desiAgent initialized successfully', {
@@ -343,6 +358,9 @@ export {
 // Skills
 export { SkillRegistry, type SkillMeta } from './core/skills/registry.js';
 export { MinimalSkillDetector, type SkillDetector } from './core/skills/detector.js';
+
+// Background stats worker
+export { StatsQueue, type StatsJob } from './core/workers/statsQueue.js';
 
 // Database initialization
 export { initDB, seedAgents, type InitDBOptions, type InitDBResult } from './services/initDB.js';

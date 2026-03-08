@@ -83,6 +83,8 @@ export interface ChatResponse {
   generationStats?: Record<string, any>;
   /** When deferGenerationStats is true, this promise resolves with { generationStats, costUsd } once available. */
   generationStatsPromise?: Promise<{ generationStats?: Record<string, any>; costUsd?: number }>;
+  /** The provider-specific generation ID (e.g., OpenRouter response ID). Used for background stats fetching. */
+  generationId?: string;
 }
 
 /**

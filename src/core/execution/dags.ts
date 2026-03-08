@@ -29,6 +29,7 @@ import type { AgentsService } from './agents.js';
 import { DAGExecutor, type ExecutionConfig } from './dagExecutor.js';
 import type { SkillRegistry } from '../skills/registry.js';
 import { MinimalSkillDetector } from '../skills/detector.js';
+import type { StatsQueue } from '../workers/statsQueue.js';
 
 export function generateDAGId(): string {
   return `dag_${nanoid(21)}`;
@@ -65,6 +66,7 @@ export interface DAGsServiceDeps {
   ollamaBaseUrl?: string;
   skipGenerationStats?: boolean;
   skillRegistry?: SkillRegistry;
+  statsQueue?: StatsQueue;
 }
 
 export interface CreateDAGFromGoalOptions {
@@ -165,6 +167,7 @@ export class DAGsService {
   private ollamaBaseUrl?: string;
   private skipGenerationStats?: boolean;
   private skillRegistry?: SkillRegistry;
+  private statsQueue?: StatsQueue;
   private logger = getLogger();
 
   constructor(deps: DAGsServiceDeps) {
@@ -179,6 +182,7 @@ export class DAGsService {
     this.ollamaBaseUrl = deps.ollamaBaseUrl;
     this.skipGenerationStats = deps.skipGenerationStats;
     this.skillRegistry = deps.skillRegistry;
+    this.statsQueue = deps.statsQueue;
   }
 
   private buildGlobalContext(job: DecomposerJob): { formatted: string; totalTasks: number } {
@@ -397,6 +401,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       const attemptCost = (response as any).costUsd;
       const attemptGenStats = (response as any).generationStats;
       const attemptGenStatsPromise = response.generationStatsPromise;
+      const attemptGenerationId = response.generationId;
 
       if (attemptUsage) {
         planningUsageTotal.promptTokens += attemptUsage.promptTokens ?? 0;
@@ -598,7 +603,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
         // Fire-and-forget: update title and generation stats in the background
         const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
-        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
+        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, attemptGenerationId, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
         return {
           status: 'clarification_required',
@@ -664,7 +669,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
         // Fire-and-forget: update title and generation stats in the background
         const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
-        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
+        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, attemptGenerationId, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
         return { status: 'success', dagId };
       }
@@ -724,7 +729,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
       // Fire-and-forget: update title and generation stats in the background
       const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
-      this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
+      this.backgroundUpdateDag(dagId, attemptGenStatsPromise, attemptGenerationId, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
       return { status: 'success', dagId };
     }
@@ -896,6 +901,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       ollamaBaseUrl: this.ollamaBaseUrl,
       skipGenerationStats: this.skipGenerationStats,
       skillRegistry: this.skillRegistry,
+      statsQueue: this.statsQueue,
     });
 
     // Start execution in background - don't await
@@ -981,6 +987,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       ollamaBaseUrl: this.ollamaBaseUrl,
       skipGenerationStats: this.skipGenerationStats,
       skillRegistry: this.skillRegistry,
+      statsQueue: this.statsQueue,
     });
 
     // Start execution in background - don't await
@@ -1497,6 +1504,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
   private backgroundUpdateDag(
     dagId: string,
     genStatsPromise: Promise<{ generationStats?: Record<string, any>; costUsd?: number }> | undefined,
+    generationId: string | undefined,
     titlePromise: Promise<{
       title: string;
       usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
@@ -1508,6 +1516,61 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     planningCostTotal: number,
     attempt: number,
   ): void {
+    // When statsQueue is available, offload generation stats to the background worker
+    if (this.statsQueue && generationId) {
+      this.statsQueue.enqueue({
+        table: 'dags',
+        id: dagId,
+        generationId,
+        attemptIndex: planningAttempts.length - 1,
+      });
+
+      // Still handle title in main thread (per requirement)
+      const run = async () => {
+        const updateData: Record<string, any> = {};
+
+        try {
+          const titleResult = await titlePromise;
+          if (titleResult) {
+            updateData.dagTitle = titleResult.title;
+            planningAttempts.push({
+              attempt,
+              reason: 'title_master',
+              usage: titleResult.usage,
+              costUsd: titleResult.costUsd,
+              generationStats: titleResult.generationStats,
+            });
+            if (titleResult.usage) {
+              planningUsageTotal.promptTokens += titleResult.usage.promptTokens ?? 0;
+              planningUsageTotal.completionTokens += titleResult.usage.completionTokens ?? 0;
+              planningUsageTotal.totalTokens += titleResult.usage.totalTokens ?? 0;
+            }
+            if (titleResult.costUsd != null) {
+              planningCostTotal += titleResult.costUsd;
+            }
+          }
+        } catch (err) {
+          this.logger.warn({ err, dagId }, 'Background: failed to generate title');
+        }
+
+        updateData.planningAttempts = planningAttempts;
+        updateData.planningTotalUsage = planningUsageTotal;
+        updateData.planningTotalCostUsd = planningCostTotal.toString();
+        updateData.updatedAt = new Date();
+
+        try {
+          await this.db.update(dags).set(updateData).where(eq(dags.id, dagId));
+          this.logger.info({ dagId, dagTitle: updateData.dagTitle }, 'Background: DAG updated with title (stats deferred to worker)');
+        } catch (err) {
+          this.logger.error({ err, dagId }, 'Background: failed to update DAG row');
+        }
+      };
+
+      run().catch(err => this.logger.error({ err, dagId }, 'Background DAG update failed'));
+      return;
+    }
+
+    // Fallback: original inline behavior when no statsQueue
     const run = async () => {
       const updateData: Record<string, any> = {};
 

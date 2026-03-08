@@ -370,7 +370,7 @@ export class OpenRouterProvider implements LLMProvider {
 
       if (this.skipGenerationStats) {
         this.logger.debug('Skipping generation stats fetch (skipGenerationStats=true)');
-        return { content, usage };
+        return { content, usage, generationId: data.id };
       }
 
       if (params.deferGenerationStats) {
@@ -379,7 +379,7 @@ export class OpenRouterProvider implements LLMProvider {
           generationStats: stats?.data,
           costUsd: extractCostFromGenerationStats(stats),
         }));
-        return { content, usage, generationStatsPromise };
+        return { content, usage, generationStatsPromise, generationId: data.id };
       }
 
       const generation_stats = await this.extractGenerationId(data);
@@ -394,6 +394,7 @@ export class OpenRouterProvider implements LLMProvider {
         usage, 
         costUsd,
         generationStats: generation_stats?.data,
+        generationId: data.id,
       };
     } catch (error) {
       throw new LLMProviderError(

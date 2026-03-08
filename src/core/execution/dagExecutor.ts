@@ -17,6 +17,7 @@ import { ExecutionsService } from './executions.js';
 import { ExecutionEventType } from '../../types/execution.js';
 import { getLogger } from '../../util/logger.js';
 import type { SkillRegistry } from '../skills/registry.js';
+import type { StatsQueue } from '../workers/statsQueue.js';
 
 
 export interface SubTask {
@@ -64,6 +65,7 @@ export interface DAGExecutorConfig {
   ollamaBaseUrl?: string;
   skipGenerationStats?: boolean;
   skillRegistry?: SkillRegistry;
+  statsQueue?: StatsQueue;
 }
 
 /**
@@ -110,6 +112,7 @@ export interface TaskExecutionResult {
   };
   costUsd?: number;
   generationStats?: Record<string, any>;
+  generationId?: string;
 }
 
 function generateSubStepId(): string {
@@ -125,6 +128,7 @@ export class DAGExecutor {
   private ollamaBaseUrl?: string;
   private skipGenerationStats?: boolean;
   private skillRegistry?: SkillRegistry;
+  private statsQueue?: StatsQueue;
   private logger = getLogger();
 
   constructor(config: DAGExecutorConfig) {
@@ -136,6 +140,7 @@ export class DAGExecutor {
     this.ollamaBaseUrl = config.ollamaBaseUrl;
     this.skipGenerationStats = config.skipGenerationStats;
     this.skillRegistry = config.skillRegistry;
+    this.statsQueue = config.statsQueue;
 
     this.logger.debug({
       provider: this.llmProvider.name,
@@ -570,6 +575,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             usage: result.usage,
             costUsd: result.costUsd,
             generationStats: result.generationStats,
+            generationId: result.generationId,
           };
         } else if (task.action_type === 'skill') {
           const skillName = task.tool_or_prompt.name;
@@ -710,16 +716,30 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
               // Skip individual DB update if batching - will batch at wave end
               if (!execConfig.batchDbUpdates) {
+                const subStepUpdate: Record<string, any> = {
+                  status: 'completed',
+                  result: serializedResult,
+                  completedAt: new Date(),
+                  durationMs: Date.now() - taskExecStartTime,
+                  usage: execResult.usage,
+                };
+
+                // When statsQueue is available, defer stats to background worker
+                if (this.statsQueue && execResult.generationId) {
+                  this.statsQueue.enqueue({
+                    table: 'sub_steps',
+                    id: task.id,
+                    taskId: task.id,
+                    executionId: execId,
+                    generationId: execResult.generationId,
+                  });
+                } else {
+                  subStepUpdate.costUsd = execResult.costUsd?.toString();
+                  subStepUpdate.generationStats = execResult.generationStats;
+                }
+
                 await this.db.update(dagSubSteps)
-                  .set({
-                    status: 'completed',
-                    result: serializedResult,
-                    completedAt: new Date(),
-                    durationMs: Date.now() - taskExecStartTime,
-                    usage: execResult.usage,
-                    costUsd: execResult.costUsd?.toString(),
-                    generationStats: execResult.generationStats,
-                  })
+                  .set(subStepUpdate)
                   .where(and(
                     eq(dagSubSteps.taskId, task.id),
                     eq(dagSubSteps.executionId, execId)
@@ -780,16 +800,30 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
                 ? wr.result!.content
                 : JSON.stringify(wr.result!.content);
 
+              const batchUpdate: Record<string, any> = {
+                status: 'completed',
+                result: serializedResult,
+                completedAt: new Date(),
+                durationMs: Date.now() - wr.startTime,
+                usage: wr.result!.usage,
+              };
+
+              // When statsQueue is available, defer stats to background worker
+              if (this.statsQueue && wr.result!.generationId) {
+                this.statsQueue.enqueue({
+                  table: 'sub_steps',
+                  id: wr.taskId,
+                  taskId: wr.taskId,
+                  executionId: execId,
+                  generationId: wr.result!.generationId,
+                });
+              } else {
+                batchUpdate.costUsd = wr.result!.costUsd?.toString();
+                batchUpdate.generationStats = wr.result!.generationStats;
+              }
+
               return this.db.update(dagSubSteps)
-                .set({
-                  status: 'completed',
-                  result: serializedResult,
-                  completedAt: new Date(),
-                  durationMs: Date.now() - wr.startTime,
-                  usage: wr.result!.usage,
-                  costUsd: wr.result!.costUsd?.toString(),
-                  generationStats: wr.result!.generationStats,
-                })
+                .set(batchUpdate)
                 .where(and(
                   eq(dagSubSteps.taskId, wr.taskId),
                   eq(dagSubSteps.executionId, execId)
@@ -851,23 +885,47 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       });
 
       const statusData = this.deriveExecutionStatus(allSubSteps);
-      const totalUsage = this.aggregateUsage(allSubSteps);
-      const totalCostUsd = this.aggregateCost(allSubSteps);
 
-      await this.db.update(dagExecutions)
-        .set({
-          status: statusData.status,
-          completedTasks: statusData.completedTasks,
-          failedTasks: statusData.failedTasks,
-          waitingTasks: statusData.waitingTasks,
-          finalResult: validatedResult,
-          synthesisResult: synthesisResult.content,
-          completedAt: new Date(),
-          durationMs: Date.now() - startTime,
-          totalUsage,
-          totalCostUsd: totalCostUsd?.toString(),
-        })
-        .where(eq(dagExecutions.id, execId));
+      if (this.statsQueue) {
+        // Write execution status without cost aggregates — worker will fill them in
+        await this.db.update(dagExecutions)
+          .set({
+            status: statusData.status,
+            completedTasks: statusData.completedTasks,
+            failedTasks: statusData.failedTasks,
+            waitingTasks: statusData.waitingTasks,
+            finalResult: validatedResult,
+            synthesisResult: synthesisResult.content,
+            completedAt: new Date(),
+            durationMs: Date.now() - startTime,
+          })
+          .where(eq(dagExecutions.id, execId));
+
+        // Enqueue aggregation to the background worker (generationId not needed for aggregation)
+        this.statsQueue.enqueue({
+          table: 'dag_executions',
+          id: execId,
+          generationId: '',
+        });
+      } else {
+        const totalUsage = this.aggregateUsage(allSubSteps);
+        const totalCostUsd = this.aggregateCost(allSubSteps);
+
+        await this.db.update(dagExecutions)
+          .set({
+            status: statusData.status,
+            completedTasks: statusData.completedTasks,
+            failedTasks: statusData.failedTasks,
+            waitingTasks: statusData.waitingTasks,
+            finalResult: validatedResult,
+            synthesisResult: synthesisResult.content,
+            completedAt: new Date(),
+            durationMs: Date.now() - startTime,
+            totalUsage,
+            totalCostUsd: totalCostUsd?.toString(),
+          })
+          .where(eq(dagExecutions.id, execId));
+      }
 
       if (statusData.status === 'completed' || statusData.status === 'partial') {
         this.emitEventIfEnabled(execConfig, {
@@ -994,6 +1052,19 @@ Generate the final report in Markdown format as specified in the synthesis plan.
     });
 
     const synthesisSubStepId = generateSubStepId();
+    const deferStats = !!(this.statsQueue && response.generationId);
+
+    // When statsQueue is available, defer stats to background worker
+    if (deferStats) {
+      this.statsQueue!.enqueue({
+        table: 'sub_steps',
+        id: '__SYNTHESIS__',
+        taskId: '__SYNTHESIS__',
+        executionId,
+        generationId: response.generationId!,
+      });
+    }
+
     await this.db.insert(dagSubSteps).values({
       id: synthesisSubStepId,
       executionId,
@@ -1009,8 +1080,8 @@ Generate the final report in Markdown format as specified in the synthesis plan.
       completedAt: new Date(),
       durationMs: Date.now() - startTime,
       usage: response.usage,
-      costUsd: (response as any).costUsd?.toString(),
-      generationStats: (response as any).generationStats,
+      costUsd: deferStats ? undefined : (response as any).costUsd?.toString(),
+      generationStats: deferStats ? undefined : (response as any).generationStats,
       result: response.content,
     });
 
@@ -1021,6 +1092,7 @@ Generate the final report in Markdown format as specified in the synthesis plan.
       usage: response.usage,
       costUsd: (response as any).costUsd,
       generationStats: (response as any).generationStats,
+      generationId: response.generationId,
     };
   }
 
