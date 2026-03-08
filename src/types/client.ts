@@ -165,6 +165,7 @@ export interface ExecutionsService {
  */
 export interface ToolsService {
   list(filter?: Record<string, any>): Promise<ToolDefinition[]>;
+  get(name: string): Promise<ToolDefinition | null>;
 }
 
 /**

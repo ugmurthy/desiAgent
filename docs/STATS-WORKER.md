@@ -36,11 +36,11 @@ This call uses exponential backoff starting at 2 seconds with up to 5 retry atte
 
 ### Components
 
-| Component | File | Thread | Role |
-|-----------|------|--------|------|
-| **StatsQueue** | `src/core/workers/statsQueue.ts` | Main | Spawns the worker, provides `enqueue(job)` and `terminate()`. Tracks `pendingCount` on the main-thread side. |
+| Component       | File                              | Thread     | Role                                                                                                                                                                           |
+| --------------- | --------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **StatsQueue**  | `src/core/workers/statsQueue.ts`  | Main       | Spawns the worker, provides `enqueue(job)` and `terminate()`. Tracks `pendingCount` on the main-thread side.                                                                   |
 | **statsWorker** | `src/core/workers/statsWorker.ts` | Bun Worker | Receives jobs via `onmessage`, fetches stats from OpenRouter, updates DB rows. Has its own SQLite connection (WAL mode allows concurrent readers/writers on the same DB file). |
-| **Consumers** | `dagExecutor.ts`, `dags.ts` | Main | Call `statsQueue.enqueue()` after LLM calls instead of fetching stats inline. |
+| **Consumers**   | `dagExecutor.ts`, `dags.ts`       | Main       | Call `statsQueue.enqueue()` after LLM calls instead of fetching stats inline.                                                                                                  |
 
 ## Message Protocol
 
@@ -48,30 +48,30 @@ Communication uses Bun Worker `postMessage` / `onmessage`:
 
 ### Main → Worker
 
-| `type` | Payload | When |
-|--------|---------|------|
-| `init` | `{ dbPath, apiKey }` | Once, immediately after worker creation |
-| `job` | `{ job: StatsJob }` | Each time a stats update is needed |
-| `shutdown` | — | During graceful termination |
+| `type`     | Payload              | When                                    |
+| ---------- | -------------------- | --------------------------------------- |
+| `init`     | `{ dbPath, apiKey }` | Once, immediately after worker creation |
+| `job`      | `{ job: StatsJob }`  | Each time a stats update is needed      |
+| `shutdown` | —                    | During graceful termination             |
 
 ### Worker → Main
 
-| `type` | Payload | When |
-|--------|---------|------|
-| `done` | `{ table, id }` | Job completed successfully |
-| `error` | `{ table, id, error }` | Job failed (logged, not retried) |
-| `drained` | — | All in-flight jobs finished after shutdown request |
+| `type`    | Payload                | When                                               |
+| --------- | ---------------------- | -------------------------------------------------- |
+| `done`    | `{ table, id }`        | Job completed successfully                         |
+| `error`   | `{ table, id, error }` | Job failed (logged, not retried)                   |
+| `drained` | —                      | All in-flight jobs finished after shutdown request |
 
 ## StatsJob Interface
 
 ```typescript
 interface StatsJob {
-  table: 'sub_steps' | 'dag_executions' | 'dags';
+  table: "sub_steps" | "dag_executions" | "dags";
   id: string;
   generationId: string;
-  taskId?: string;        // sub_steps: composite key with executionId
-  executionId?: string;   // sub_steps: composite key with taskId
-  attemptIndex?: number;  // dags: which planningAttempts entry to patch
+  taskId?: string; // sub_steps: composite key with executionId
+  executionId?: string; // sub_steps: composite key with taskId
+  attemptIndex?: number; // dags: which planningAttempts entry to patch
 }
 ```
 
@@ -80,12 +80,14 @@ interface StatsJob {
 #### `sub_steps`
 
 Fetches generation stats from OpenRouter, then updates the row matching `(taskId, executionId)` with:
+
 - `generationStats` — filtered stats object (latency, model, generation_time, finish_reason, total_cost, id)
 - `costUsd` — extracted `total_cost` as string
 
 #### `dag_executions`
 
 Aggregates costs and usage across all `sub_steps` for a given execution. The worker waits 1 second before reading sub_steps to allow concurrent sub_step stats jobs to finish first. Sets:
+
 - `totalUsage` — sum of `{ promptTokens, completionTokens, totalTokens }` from all sub_steps
 - `totalCostUsd` — sum of all sub_step `costUsd` values
 
@@ -136,7 +138,7 @@ In `src/index.ts`, the StatsQueue is created conditionally:
 // 1. llmProvider === 'openrouter'
 // 2. skipGenerationStats is false (or unset)
 // 3. apiKey is present
-if (llmProvider === 'openrouter' && !skipGenerationStats && apiKey) {
+if (llmProvider === "openrouter" && !skipGenerationStats && apiKey) {
   statsQueue = new StatsQueue(dbPath, apiKey);
   statsQueue.start();
 }
@@ -154,7 +156,7 @@ On shutdown:
 
 ```typescript
 client.shutdown = async () => {
-  await statsQueue?.terminate();  // drain before closing DB
+  await statsQueue?.terminate(); // drain before closing DB
   closeDatabase();
 };
 ```
@@ -168,7 +170,7 @@ client.shutdown = async () => {
 if (this.statsQueue && execResult.generationId) {
   // Background: enqueue stats fetch to worker
   this.statsQueue.enqueue({
-    table: 'sub_steps',
+    table: "sub_steps",
     id: task.id,
     taskId: task.id,
     executionId: execId,
@@ -182,6 +184,7 @@ if (this.statsQueue && execResult.generationId) {
 ```
 
 This means:
+
 - **Ollama** users are unaffected (Ollama returns stats inline, no generationId).
 - **OpenRouter with `skipGenerationStats: true`** skips stats entirely (no queue created).
 - **Existing deployments** continue working without configuration changes.
@@ -216,6 +219,7 @@ statsWorker — fetchGenerationStats(generationId)
 ```
 
 The `generationId` field was added to:
+
 - `ChatResponse` in `src/core/providers/types.ts`
 - `TaskExecutionResult` in `src/core/execution/dagExecutor.ts`
 
@@ -223,24 +227,24 @@ The OpenRouter provider returns `generationId` in all code paths (inline stats, 
 
 ## Key Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| Worker has its own DB connection | SQLite WAL mode supports concurrent readers and a single writer. The worker opens a separate connection to avoid cross-thread sharing. |
-| Jobs processed serially | SQLite has a single-writer constraint. Serial processing avoids write contention. |
-| Only OpenRouter needs this | Ollama returns stats inline in the chat response. OpenAI could be added later if needed. |
-| Failed stats fetches are silently skipped | Stats are non-critical — a failed fetch logs a warning but doesn't affect execution results. |
-| `dag_executions` aggregation waits 1s | Heuristic delay to let concurrent sub_step stats jobs finish before aggregating. Not guaranteed but reduces stale reads. |
-| Title generation stays on main thread | Explicit design requirement — title updates happen via `backgroundUpdateDag` in `dags.ts`, not through the worker. |
-| 30-second drain timeout | Balance between allowing slow OpenRouter responses to complete and not blocking shutdown indefinitely. |
+| Decision                                  | Rationale                                                                                                                              |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Worker has its own DB connection          | SQLite WAL mode supports concurrent readers and a single writer. The worker opens a separate connection to avoid cross-thread sharing. |
+| Jobs processed serially                   | SQLite has a single-writer constraint. Serial processing avoids write contention.                                                      |
+| Only OpenRouter needs this                | Ollama returns stats inline in the chat response. OpenAI could be added later if needed.                                               |
+| Failed stats fetches are silently skipped | Stats are non-critical — a failed fetch logs a warning but doesn't affect execution results.                                           |
+| `dag_executions` aggregation waits 1s     | Heuristic delay to let concurrent sub_step stats jobs finish before aggregating. Not guaranteed but reduces stale reads.               |
+| Title generation stays on main thread     | Explicit design requirement — title updates happen via `backgroundUpdateDag` in `dags.ts`, not through the worker.                     |
+| 30-second drain timeout                   | Balance between allowing slow OpenRouter responses to complete and not blocking shutdown indefinitely.                                 |
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/core/workers/statsQueue.ts` | Main-thread queue interface |
-| `src/core/workers/statsWorker.ts` | Background worker thread |
+| File                                | Purpose                                    |
+| ----------------------------------- | ------------------------------------------ |
+| `src/core/workers/statsQueue.ts`    | Main-thread queue interface                |
+| `src/core/workers/statsWorker.ts`   | Background worker thread                   |
 | `src/core/execution/dagExecutor.ts` | Enqueues sub_steps and dag_executions jobs |
-| `src/core/execution/dags.ts` | Enqueues dags planning stats jobs |
-| `src/core/providers/openrouter.ts` | Source of generationId |
-| `src/core/providers/types.ts` | ChatResponse with generationId field |
-| `src/index.ts` | Conditional creation and shutdown wiring |
+| `src/core/execution/dags.ts`        | Enqueues dags planning stats jobs          |
+| `src/core/providers/openrouter.ts`  | Source of generationId                     |
+| `src/core/providers/types.ts`       | ChatResponse with generationId field       |
+| `src/index.ts`                      | Conditional creation and shutdown wiring   |

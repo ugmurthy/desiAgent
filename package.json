@@ -1,6 +1,6 @@
 {
   "name": "@ugm/desiagent",
-  "version": "0.2.00",
+  "version": "0.2.01",
   "description": "A library-first async agent system for building autonomous workflows",
   "homepage": "https://github.com/ugmurthy/desiAgent",
   "main": "./dist/index.js",

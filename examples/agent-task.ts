@@ -17,7 +17,7 @@ async function main() {
   });
 
   try {
-    const checkerAgent = await client.agents.resolve(process.env.DEFAULT_DECOMPOSER_AGENT || "DecomposerV8");
+    const checkerAgent = await client.agents.resolve(process.env.DEFAULT_DECOMPOSER_AGENT || "DecomposerV9");
     const result = await client.executeTask(checkerAgent,"create a web app: Pomodoro time in a single html file.");
     console.log(JSON.stringify(result,null,2));
     

@@ -12,6 +12,7 @@
  *   -f, --file <file>      Create a new agent with prompt template from file (requires -m and -p)
  *   -m, --model <model>    Model name (optional for update, required for create)
  *   -p, --provider <name>  Provider name (optional for update, required for create)
+ *   -r, --raw [agent-name] Output raw JSON (all agents array, or single agent if name given)
  */
 
 import { readFileSync } from 'fs';
@@ -23,12 +24,14 @@ Usage:
   bun run examples/list-agents.ts <agent-name>                             # show agent prompt
   bun run examples/list-agents.ts <agent-name> -u <file> [-m model] [-p provider]  # update existing agent
   bun run examples/list-agents.ts <agent-name> -f <file> -m <model> -p <provider>  # create new agent
+  bun run examples/list-agents.ts -r [agent-name]                                  # raw JSON output
 
 Switches:
   -u, --update <file>    Update an existing agent's prompt template from file
   -f, --file <file>      Create a new agent with prompt template from file (requires -m and -p)
   -m, --model <model>    Model name (optional for update, required for create)
   -p, --provider <name>  Provider name (optional for update, required for create)
+  -r, --raw [agent-name] Output raw JSON (all agents array, or single agent if name given)
   -h, --help             Show this help message
 `.trim();
 
@@ -38,6 +41,7 @@ interface ParsedArgs {
   createFile?: string;
   model?: string;
   provider?: string;
+  raw?: string | true;
   help?: boolean;
 }
 
@@ -63,6 +67,14 @@ function parseArgs(argv: string[]): ParsedArgs {
       case '--provider':
         result.provider = args[++i];
         break;
+      case '-r':
+      case '--raw':
+        if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
+          result.raw = args[++i];
+        } else {
+          result.raw = true;
+        }
+        break;
       case '-h':
       case '--help':
         result.help = true;
@@ -87,7 +99,7 @@ async function main() {
     databasePath: process.env.DATABASE_PATH
   });
 
-  const { agentName, updateFile, createFile, model, provider, help } = parseArgs(process.argv);
+  const { agentName, updateFile, createFile, model, provider, raw, help } = parseArgs(process.argv);
 
   if (help) {
     console.log(USAGE);
@@ -95,6 +107,21 @@ async function main() {
   }
 
   try {
+    if (raw) {
+      const allAgents = await client.agents.list();
+      if (typeof raw === 'string') {
+        const matched = allAgents.find(agent => agent.name === raw);
+        if (!matched) {
+          console.error(`No agent found with name "${raw}"`);
+          process.exit(1);
+        }
+        console.log(JSON.stringify(matched, null, 2));
+      } else {
+        console.log(JSON.stringify(allAgents, null, 2));
+      }
+      return;
+    }
+
     if (agentName && createFile) {
       if (!model || !provider) {
         console.error('Error: -m <model> and -p <provider> are required when creating a new agent');

@@ -13,6 +13,7 @@ A library-first async agent system for building autonomous workflows with TypeSc
 - **Cron Scheduling** — Schedule DAGs to run on a cron expression with timezone support.
 - **Artifacts** — Tools can write output files (reports, code, images) that are automatically stored and retrievable.
 - **Cost Tracking** — Token usage and USD cost are recorded per execution step.
+- **Skills** — Drop a `SKILL.md` file into your workspace or global config and the agent discovers it automatically. Skills can be injected as context into LLM prompts or executed as sub-tasks in a DAG.
 - **Experiments API** — Compare models and temperatures on the same goal in one call.
 
 ## Installation
@@ -71,7 +72,7 @@ const client = await setupDesiAgent({
 
 const result = await client.dags.createAndExecuteFromGoal({
   goalText: 'Research the top 5 trends in AI agents for 2025 and write a concise briefing document to ai-trends.md',
-  agentName: 'DecomposerV8',
+  agentName: 'DecomposerV9',
   temperature: 0.7,
 });
 
@@ -111,7 +112,7 @@ const client = await setupDesiAgent({
 // Step 1 — Plan
 const plan = await client.dags.createFromGoal({
   goalText: 'Create a tutorial on processing driftwood into handicrafts — cover cleaning, tools, finishes — and write it to driftwood.md',
-  agentName: 'DecomposerV8',
+  agentName: 'DecomposerV9',
   temperature: 0.7,
 });
 
@@ -185,7 +186,7 @@ const client = await setupDesiAgent({
 
 const plan = await client.dags.createFromGoal({
   goalText: 'Build the app',
-  agentName: 'DecomposerV8',
+  agentName: 'DecomposerV9',
 });
 
 if (plan.status === 'clarification_required') {
@@ -242,6 +243,75 @@ bun run examples/list-agents.ts
 bun run examples/list-tools.ts --names
 ```
 
+## Skills
+
+Skills are reusable instruction files (`SKILL.md`) that extend what the agent can do. Each skill is a Markdown file with YAML frontmatter describing its name, description, and type. When a goal is submitted, desiAgent automatically discovers skills, detects which ones are relevant, and either injects their content into the LLM prompt or executes them as sub-tasks inside a DAG.
+
+### Skill Types
+
+| Type | Behaviour |
+|---|---|
+| `context` | The skill's Markdown body is loaded and injected as instructions into an LLM inference call during DAG execution. |
+| `executable` | A sibling `handler.ts` file is imported and its default export is called with the task parameters. |
+
+### SKILL.md Format
+
+```markdown
+---
+name: my-skill
+description: A short sentence describing what this skill does (min 10 chars).
+type: context        # or "executable"
+model: openai/gpt-4o # optional — override model for this skill
+provider: openrouter  # optional — override provider
+---
+
+Your skill instructions in Markdown go here.
+The agent receives this content when the skill is used.
+```
+
+> The `name` field **must** match the enclosing directory name (e.g., `my-skill/SKILL.md` must have `name: my-skill`).
+
+### Discovery
+
+On startup, `SkillRegistry.discover()` scans the following locations **in order**. The first skill registered for a given name wins — later duplicates are silently skipped.
+
+| Priority | Location | Scope |
+|---|---|---|
+| 1 | `<workspace>/.agents/skills/<name>/SKILL.md` | Local (workspace) |
+| 2 | `<workspace>/skills/<name>/SKILL.md` | Local (workspace) |
+| 3 | `<workspace>/SKILL.md` | Local (workspace root) |
+| 4 | `~/.config/agents/skills/<name>/SKILL.md` | Global |
+| 5 | `~/.desiAgent/skills/<name>/SKILL.md` | Global |
+
+**Local wins over global.** If a workspace defines a skill named `summarizer` in `.agents/skills/summarizer/SKILL.md` and a global skill with the same name exists in `~/.desiAgent/skills/summarizer/SKILL.md`, the workspace version is used.
+
+### How Skills Are Selected
+
+When you submit a goal, a `MinimalSkillDetector` checks for:
+
+1. **Explicit triggers** — phrases like `use skill <name>` or `use <name> skill` in the goal text.
+2. **Keyword matching** — if no explicit trigger is found, skill descriptions are matched against keywords in the goal.
+
+Matched skills are listed in the agent's system prompt so the LLM can plan DAG tasks with `action_type: 'skill'`.
+
+### Using Skills Programmatically
+
+```typescript
+import { SkillRegistry } from '@ugm/desiagent';
+
+const registry = new SkillRegistry(process.cwd());
+await registry.discover();
+
+// List all discovered skills
+for (const skill of registry.getAll()) {
+  console.log(`${skill.name} (${skill.type}) — ${skill.description}`);
+}
+
+// Load a skill's content
+const content = await registry.loadContent('my-skill');
+console.log(content);
+```
+
 ## Configuration Reference
 
 ```typescript
@@ -269,9 +339,13 @@ interface DesiAgentConfig {
   onExecutionStart?: (executionId: string) => void;
   onExecutionEnd?: (executionId: string, result: Record<string, any>) => void;
 
+  // Workspace root for skill discovery
+  workspaceRoot?: string;         // default: process.cwd()
+
   // Feature flags
   autoStartScheduler?: boolean;  // default: true
   enableToolValidation?: boolean; // default: true
+  skipGenerationStats?: boolean; // default: false
 }
 ```
 
