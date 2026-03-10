@@ -22,6 +22,7 @@ import { AgentsService } from './core/execution/agents.js';
 import { DAGsService } from './core/execution/dags.js';
 import { ExecutionsService } from './core/execution/executions.js';
 import { ToolsService } from './core/execution/tools.js';
+import { SkillsService } from './core/execution/skills.js';
 import { ArtifactsService } from './core/execution/artifacts.js';
 import { CostsService } from './core/execution/costs.js';
 import { createToolRegistry, ToolExecutor } from './core/tools/index.js';
@@ -37,6 +38,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
   dags: DAGsService;
   executions: ExecutionsService;
   tools: ToolsService;
+  skills: SkillsService;
   artifacts: ArtifactsService;
   costs: CostsService;
   version: string = packageJson.version;
@@ -49,6 +51,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
     dags: DAGsService,
     executions: ExecutionsService,
     tools: ToolsService,
+    skills: SkillsService,
     artifacts: ArtifactsService,
     costs: CostsService,
     isMemoryDb: boolean = false,
@@ -58,6 +61,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
     this.dags = dags;
     this.executions = executions;
     this.tools = tools;
+    this.skills = skills;
     this.artifacts = artifacts;
     this.costs = costs;
     this.isMemoryDb = isMemoryDb;
@@ -163,6 +167,17 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     const skillNames = allSkills.map(s => s.name);
     logger.info({ skillCount: allSkills.length, skillNames }, 'Skills discovered');
 
+    // Initialize skills service
+    const skillsService = new SkillsService({
+      skillRegistry,
+      defaultProvider: resolved.llmProvider,
+      defaultModel: resolved.modelName,
+      artifactsDir: resolved.artifactsDir,
+      apiKey: resolved.apiKey,
+      ollamaBaseUrl: resolved.ollamaBaseUrl,
+      skipGenerationStats: resolved.skipGenerationStats,
+    });
+
     // Initialize background stats worker for OpenRouter
     let statsQueue: StatsQueue | undefined;
     if (resolved.llmProvider === 'openrouter' && !resolved.skipGenerationStats && resolved.apiKey) {
@@ -198,6 +213,7 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       dagsService,
       executionsService,
       toolsService,
+      skillsService,
       artifactsService,
       costsService,
       resolved.isMemoryDb,
@@ -267,6 +283,10 @@ export {
   type ToolCall,
   type ToolResult,
   type AgentDefinition,
+  type SkillTestableProvider,
+  type SkillListOptions,
+  type SkillTestInput,
+  type SkillTestResult,
 } from './types/index.js';
 
 // DAG-specific types
@@ -311,6 +331,7 @@ export { ExecutionsService } from './core/execution/executions.js';
 export { CostsService } from './core/execution/costs.js';
 export { AgentsService } from './core/execution/agents.js';
 export { ToolsService } from './core/execution/tools.js';
+export { SkillsService } from './core/execution/skills.js';
 export { ArtifactsService } from './core/execution/artifacts.js';
 
 // Custom inference

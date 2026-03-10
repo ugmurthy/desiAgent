@@ -9,6 +9,7 @@ import type {
   DAGFilter,
 } from './execution.js';
 import type { Agent, ToolDefinition } from './agent.js';
+import type { SkillMeta } from '../core/skills/registry.js';
 
 /**
  * Agents service interface
@@ -168,6 +169,44 @@ export interface ToolsService {
   get(name: string): Promise<ToolDefinition | null>;
 }
 
+export type SkillTestableProvider = 'openai' | 'openrouter' | 'ollama';
+
+export interface SkillListOptions {
+  reload?: boolean;
+}
+
+export interface SkillTestInput {
+  name: string;
+  prompt?: string;
+  params?: Record<string, unknown>;
+  provider?: SkillTestableProvider;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+  reload?: boolean;
+}
+
+export interface SkillTestResult {
+  name: string;
+  type: 'context' | 'executable';
+  source: 'workspace' | 'global';
+  providerUsed?: SkillTestableProvider;
+  modelUsed?: string;
+  durationMs: number;
+  output: unknown;
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
+  costUsd?: number;
+}
+
+export interface SkillsService {
+  list(options?: SkillListOptions): Promise<SkillMeta[]>;
+  test(input: SkillTestInput): Promise<SkillTestResult>;
+}
+
 /**
  * Artifacts service interface
  */
@@ -313,6 +352,7 @@ export interface DesiAgentClient {
   dags: DAGsService;
   executions: ExecutionsService;
   tools: ToolsService;
+  skills: SkillsService;
   artifacts: ArtifactsService;
   costs: CostsService;
   version: string

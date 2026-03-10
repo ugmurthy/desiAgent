@@ -48,4 +48,11 @@ export {
 } from './agent.js';
 
 // Client interface
-export type { DesiAgentClient } from './client.js';
+export type {
+  DesiAgentClient,
+  SkillsService,
+  SkillTestableProvider,
+  SkillListOptions,
+  SkillTestInput,
+  SkillTestResult,
+} from './client.js';

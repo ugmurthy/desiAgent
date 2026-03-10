@@ -67,6 +67,11 @@ export class SkillRegistry {
     this.logger.info({ count: this.skills.size }, 'Skill discovery complete');
   }
 
+  async refresh(): Promise<void> {
+    this.skills.clear();
+    await this.discover();
+  }
+
   private async discoverGlobSkills(dir: string, source: 'workspace' | 'global'): Promise<void> {
     let entries: string[];
     try {

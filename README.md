@@ -312,6 +312,38 @@ const content = await registry.loadContent('my-skill');
 console.log(content);
 ```
 
+### Testing Skills Programmatically
+
+```typescript
+import { setupDesiAgent } from '@ugm/desiagent';
+
+const client = await setupDesiAgent({
+  llmProvider: 'openrouter',
+  openrouterApiKey: process.env.OPENROUTER_API_KEY,
+  modelName: 'google/gemini-2.5-flash-lite-preview-09-2025',
+});
+
+// List discovered skills (use reload: true while iterating on new SKILL.md files)
+const skills = await client.skills.list({ reload: true });
+console.log(skills.map(s => s.name));
+
+// Test a context skill
+const contextResult = await client.skills.test({
+  name: 'cataloging-apis',
+  prompt: 'Document this endpoint: POST /v1/customers',
+});
+console.log(contextResult.output);
+
+// Test an executable skill
+const execResult = await client.skills.test({
+  name: 'git-expert',
+  params: { command: 'status' },
+});
+console.log(execResult.output);
+
+await client.shutdown();
+```
+
 ## Configuration Reference
 
 ```typescript
