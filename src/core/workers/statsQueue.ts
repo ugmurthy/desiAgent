@@ -12,11 +12,11 @@ import { getLogger } from '../../util/logger.js';
  */
 export interface StatsJob {
   /** Which table to update */
-  table: 'sub_steps' | 'dag_executions' | 'dags';
+  table: 'sub_steps' | 'dag_executions' | 'dags' | 'reconcile';
   /** Row ID in that table (dagId for 'dags', executionId for 'dag_executions') */
   id: string;
   /** OpenRouter generation ID for fetching stats */
-  generationId: string;
+  generationId?: string;
   /**
    * For 'sub_steps': the taskId used with executionId to locate the row.
    */
@@ -36,7 +36,11 @@ export interface StatsJob {
  * Message sent from main thread → worker
  */
 export interface WorkerInMessage {
-  type: 'job' | 'shutdown';
+  type: 'init' | 'job' | 'shutdown';
+  dbPath?: string;
+  apiKey?: string;
+  reconcileIntervalMs?: number;
+  reconcileBatchSize?: number;
   job?: StatsJob;
 }
 
@@ -52,6 +56,13 @@ export interface WorkerOutMessage {
 
 /** Max time (ms) to wait for the worker to drain before force-terminating */
 const DRAIN_TIMEOUT_MS = 30_000;
+const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
+const DEFAULT_RECONCILE_BATCH_SIZE = 50;
+
+export interface StatsQueueOptions {
+  reconcileIntervalMs?: number;
+  reconcileBatchSize?: number;
+}
 
 export class StatsQueue {
   private worker: Worker | null = null;
@@ -59,10 +70,16 @@ export class StatsQueue {
   private dbPath: string;
   private apiKey: string;
   private pendingCount = 0;
+  private reconcileInFlight = false;
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private reconcileIntervalMs: number;
+  private reconcileBatchSize: number;
 
-  constructor(dbPath: string, apiKey: string) {
+  constructor(dbPath: string, apiKey: string, options?: StatsQueueOptions) {
     this.dbPath = dbPath;
     this.apiKey = apiKey;
+    this.reconcileIntervalMs = options?.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS;
+    this.reconcileBatchSize = options?.reconcileBatchSize ?? DEFAULT_RECONCILE_BATCH_SIZE;
   }
 
   /**
@@ -79,15 +96,23 @@ export class StatsQueue {
       type: 'init',
       dbPath: this.dbPath,
       apiKey: this.apiKey,
+      reconcileIntervalMs: this.reconcileIntervalMs,
+      reconcileBatchSize: this.reconcileBatchSize,
     });
 
     this.worker.onmessage = (event: MessageEvent<WorkerOutMessage>) => {
       const msg = event.data;
       if (msg.type === 'done') {
-        this.pendingCount--;
+        this.pendingCount = Math.max(0, this.pendingCount - 1);
+        if (msg.table === 'reconcile') {
+          this.reconcileInFlight = false;
+        }
         this.logger.debug({ table: msg.table, id: msg.id }, 'StatsWorker: update complete');
       } else if (msg.type === 'error') {
-        this.pendingCount--;
+        this.pendingCount = Math.max(0, this.pendingCount - 1);
+        if (msg.table === 'reconcile') {
+          this.reconcileInFlight = false;
+        }
         this.logger.warn({ table: msg.table, id: msg.id, error: msg.error }, 'StatsWorker: update failed');
       }
       // 'drained' is handled by the terminate() promise listener
@@ -100,7 +125,29 @@ export class StatsQueue {
     // Don't let the worker keep the process alive during normal operation
     this.worker.unref();
 
-    this.logger.info('StatsQueue: background worker started');
+    this.reconcileTimer = setInterval(() => {
+      this.enqueueReconcileTick();
+    }, this.reconcileIntervalMs);
+    this.reconcileTimer.unref?.();
+
+    this.enqueueReconcileTick();
+
+    this.logger.info({
+      reconcileIntervalMs: this.reconcileIntervalMs,
+      reconcileBatchSize: this.reconcileBatchSize,
+    }, 'StatsQueue: background worker started');
+  }
+
+  private enqueueReconcileTick(): void {
+    if (!this.worker || this.reconcileInFlight) {
+      return;
+    }
+
+    this.reconcileInFlight = true;
+    this.enqueue({
+      table: 'reconcile',
+      id: `reconcile_${Date.now()}`,
+    });
   }
 
   /**
@@ -125,6 +172,11 @@ export class StatsQueue {
    */
   async terminate(): Promise<void> {
     if (!this.worker) return;
+
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
+    }
 
     // Fast path: no pending work
     if (this.pendingCount <= 0) {
@@ -163,5 +215,6 @@ export class StatsQueue {
 
     this.worker = null;
     this.pendingCount = 0;
+    this.reconcileInFlight = false;
   }
 }

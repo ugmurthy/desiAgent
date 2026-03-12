@@ -12,7 +12,7 @@ declare var self: Worker;
 
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { Database } from 'bun:sqlite';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import * as schema from '../../db/schema.js';
 import { dags, dagExecutions, dagSubSteps } from '../../db/schema.js';
 import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
@@ -21,9 +21,11 @@ import type { StatsJob, WorkerOutMessage } from './statsQueue.js';
 const BASE_URL = 'https://openrouter.ai/api/v1';
 const MAX_FETCH_ATTEMPTS = 5;
 const INITIAL_DELAY_MS = 2000;
+const DEFAULT_RECONCILE_BATCH_SIZE = 50;
 
 let db: BunSQLiteDatabase<typeof schema> | null = null;
 let apiKey: string = '';
+let reconcileBatchSize = DEFAULT_RECONCILE_BATCH_SIZE;
 
 /** Number of jobs currently being processed */
 let pendingCount = 0;
@@ -107,30 +109,62 @@ async function fetchGenerationStats(
  * Uses taskId + executionId as composite key (matching the pattern in DAGExecutor).
  */
 async function updateSubStep(job: StatsJob): Promise<void> {
-  const stats = await fetchGenerationStats(job.generationId);
+  if (job.id.startsWith('reconcile_')) {
+    return;
+  }
+
+  let generationId = job.generationId;
+  if (!generationId) {
+    if (job.taskId && job.executionId) {
+      const existingStep = await db!.query.dagSubSteps.findFirst({
+        where: and(
+          eq(dagSubSteps.taskId, job.taskId),
+          eq(dagSubSteps.executionId, job.executionId),
+        ),
+      });
+      generationId = existingStep?.generationId || undefined;
+    } else {
+      const existingStep = await db!.query.dagSubSteps.findFirst({
+        where: eq(dagSubSteps.id, job.id),
+      });
+      generationId = existingStep?.generationId || undefined;
+    }
+  }
+
+  if (!generationId) return;
+
+  const stats = await fetchGenerationStats(generationId);
   if (stats.error || !stats.data) return;
 
-  if (!job.taskId || !job.executionId) return;
+  if (job.taskId && job.executionId) {
+    await db!.update(dagSubSteps)
+      .set({
+        generationStats: stats.data,
+        costUsd: stats.costUsd?.toString(),
+        generationId,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(dagSubSteps.taskId, job.taskId),
+        eq(dagSubSteps.executionId, job.executionId),
+      ));
+    return;
+  }
 
   await db!.update(dagSubSteps)
     .set({
       generationStats: stats.data,
       costUsd: stats.costUsd?.toString(),
+      generationId,
       updatedAt: new Date(),
     })
-    .where(and(
-      eq(dagSubSteps.taskId, job.taskId),
-      eq(dagSubSteps.executionId, job.executionId),
-    ));
+    .where(eq(dagSubSteps.id, job.id));
 }
 
 /**
  * Update dag_executions table by re-aggregating costs from all sub_steps.
  */
 async function updateDagExecution(job: StatsJob): Promise<void> {
-  // Wait a moment for any sub_step stats workers to finish first
-  await new Promise(resolve => setTimeout(resolve, 1000));
-
   const allSubSteps = await db!.query.dagSubSteps.findMany({
     where: eq(dagSubSteps.executionId, job.id),
   });
@@ -165,11 +199,131 @@ async function updateDagExecution(job: StatsJob): Promise<void> {
     .where(eq(dagExecutions.id, job.id));
 }
 
+function parseCostUsd(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+
+  const parsed = parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function reconcileSubSteps(batchSize: number): Promise<Set<string>> {
+  const unresolvedSubSteps = await db!.select({
+    id: dagSubSteps.id,
+    executionId: dagSubSteps.executionId,
+    generationId: dagSubSteps.generationId,
+  })
+    .from(dagSubSteps)
+    .where(sql`${dagSubSteps.generationId} is not null and (${dagSubSteps.costUsd} is null or ${dagSubSteps.generationStats} is null)`)
+    .limit(batchSize);
+
+  const touchedExecutionIds = new Set<string>();
+
+  for (const step of unresolvedSubSteps) {
+    if (!step.generationId) {
+      continue;
+    }
+
+    const stats = await fetchGenerationStats(step.generationId);
+    if (stats.error || !stats.data) {
+      continue;
+    }
+
+    await db!.update(dagSubSteps)
+      .set({
+        generationStats: stats.data,
+        costUsd: stats.costUsd?.toString(),
+        updatedAt: new Date(),
+      })
+      .where(eq(dagSubSteps.id, step.id));
+
+    touchedExecutionIds.add(step.executionId);
+  }
+
+  return touchedExecutionIds;
+}
+
+async function reconcileDagPlanningAttempts(): Promise<void> {
+  const candidateDags = await db!.select({
+    id: dags.id,
+    planningAttempts: dags.planningAttempts,
+    planningTotalCostUsd: dags.planningTotalCostUsd,
+  })
+    .from(dags)
+    .where(sql`${dags.planningAttempts} is not null`);
+
+  for (const dag of candidateDags) {
+    const attempts = dag.planningAttempts;
+    if (!attempts || attempts.length === 0) {
+      continue;
+    }
+
+    let changed = false;
+    for (const attempt of attempts) {
+      if (!attempt.generationId) {
+        continue;
+      }
+
+      const attemptHasCost = attempt.costUsd != null;
+      const attemptHasStats = !!attempt.generationStats;
+      if (attemptHasCost && attemptHasStats) {
+        continue;
+      }
+
+      const stats = await fetchGenerationStats(attempt.generationId);
+      if (stats.error || !stats.data) {
+        continue;
+      }
+
+      attempt.generationStats = stats.data;
+      attempt.costUsd = stats.costUsd;
+      changed = true;
+    }
+
+    if (!changed) {
+      continue;
+    }
+
+    const totalCost = attempts.reduce((sum, attempt) => sum + parseCostUsd(attempt.costUsd), 0);
+
+    await db!.update(dags)
+      .set({
+        planningAttempts: attempts,
+        planningTotalCostUsd: totalCost.toString(),
+        updatedAt: new Date(),
+      })
+      .where(eq(dags.id, dag.id));
+  }
+}
+
+async function reconcileDagExecutionAggregates(touchedExecutionIds: Set<string>, batchSize: number): Promise<void> {
+  const candidates = await db!.select({ id: dagExecutions.id })
+    .from(dagExecutions)
+    .where(sql`${dagExecutions.completedAt} is not null and (${dagExecutions.totalCostUsd} is null or ${dagExecutions.totalUsage} is null)`)
+    .limit(batchSize);
+
+  for (const row of candidates) {
+    touchedExecutionIds.add(row.id);
+  }
+
+  for (const executionId of touchedExecutionIds) {
+    await updateDagExecution({ table: 'dag_executions', id: executionId });
+  }
+}
+
+async function runReconciliation(batchSize: number): Promise<void> {
+  const touchedExecutionIds = await reconcileSubSteps(batchSize);
+  await reconcileDagPlanningAttempts();
+  await reconcileDagExecutionAggregates(touchedExecutionIds, batchSize);
+}
+
 /**
  * Update dags table: fetch generation stats for a planning attempt
  * and recalculate planning totals.
  */
 async function updateDag(job: StatsJob): Promise<void> {
+  if (!job.generationId) return;
+
   const stats = await fetchGenerationStats(job.generationId);
   if (stats.error || !stats.data) return;
 
@@ -217,6 +371,9 @@ async function processJob(job: StatsJob): Promise<void> {
     case 'dags':
       await updateDag(job);
       break;
+    case 'reconcile':
+      await runReconciliation(reconcileBatchSize);
+      break;
   }
 }
 
@@ -233,6 +390,9 @@ self.onmessage = async (event: MessageEvent) => {
     sqlite.exec('PRAGMA foreign_keys = ON;');
     db = drizzle(sqlite, { schema });
     apiKey = msg.apiKey;
+    reconcileBatchSize = msg.reconcileBatchSize && msg.reconcileBatchSize > 0
+      ? msg.reconcileBatchSize
+      : DEFAULT_RECONCILE_BATCH_SIZE;
     return;
   }
 

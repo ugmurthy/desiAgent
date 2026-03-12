@@ -186,7 +186,10 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
     // Initialize background stats worker for OpenRouter
     let statsQueue: StatsQueue | undefined;
     if (resolved.llmProvider === 'openrouter' && !resolved.skipGenerationStats && resolved.apiKey) {
-      statsQueue = new StatsQueue(resolved.databasePath, resolved.apiKey);
+      statsQueue = new StatsQueue(resolved.databasePath, resolved.apiKey, {
+        reconcileIntervalMs: resolved.statsReconcileIntervalMs,
+        reconcileBatchSize: resolved.statsReconcileBatchSize,
+      });
       statsQueue.start();
       logger.info('Background stats worker started for OpenRouter');
     }

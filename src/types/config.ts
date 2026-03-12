@@ -50,6 +50,8 @@ export const DesiAgentConfigSchema = z.object({
   autoStartScheduler: z.boolean().optional().default(true),
   enableToolValidation: z.boolean().optional().default(true),
   skipGenerationStats: z.boolean().optional().default(false),
+  statsReconcileIntervalMs: z.number().int().positive().optional().default(30_000),
+  statsReconcileBatchSize: z.number().int().positive().optional().default(50),
 });
 
 /**
@@ -97,6 +99,8 @@ export interface DesiAgentConfig {
   autoStartScheduler?: boolean;
   enableToolValidation?: boolean;
   skipGenerationStats?: boolean;
+  statsReconcileIntervalMs?: number;
+  statsReconcileBatchSize?: number;
 }
 
 export interface ResolvedConfig {
@@ -136,6 +140,8 @@ export interface ResolvedConfig {
   autoStartScheduler: boolean;
   enableToolValidation: boolean;
   skipGenerationStats: boolean;
+  statsReconcileIntervalMs: number;
+  statsReconcileBatchSize: number;
 }
 
 /**
@@ -174,6 +180,15 @@ export function resolveConfig(validated: z.infer<typeof DesiAgentConfigSchema>):
 
   const logDir = process.env.LOG_DIR || join(homedir(), '.desiAgent', 'logs');
 
+  const statsReconcileIntervalMs = parseInt(
+    process.env.STATS_RECONCILE_INTERVAL_MS || String(validated.statsReconcileIntervalMs),
+    10
+  );
+  const statsReconcileBatchSize = parseInt(
+    process.env.STATS_RECONCILE_BATCH_SIZE || String(validated.statsReconcileBatchSize),
+    10
+  );
+
   return Object.freeze({
     databasePath,
     isMemoryDb,
@@ -211,5 +226,11 @@ export function resolveConfig(validated: z.infer<typeof DesiAgentConfigSchema>):
     autoStartScheduler: validated.autoStartScheduler,
     enableToolValidation: validated.enableToolValidation,
     skipGenerationStats: validated.skipGenerationStats,
+    statsReconcileIntervalMs: Number.isFinite(statsReconcileIntervalMs) && statsReconcileIntervalMs > 0
+      ? statsReconcileIntervalMs
+      : validated.statsReconcileIntervalMs,
+    statsReconcileBatchSize: Number.isFinite(statsReconcileBatchSize) && statsReconcileBatchSize > 0
+      ? statsReconcileBatchSize
+      : validated.statsReconcileBatchSize,
   });
 }
