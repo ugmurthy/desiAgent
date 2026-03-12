@@ -30,6 +30,82 @@ function initializeTables(sqlite: any, logger: any): void {
   }
 }
 
+function hasColumn(sqlite: any, tableName: string, columnName: string): boolean {
+  const rows = sqlite.query(`PRAGMA table_info(${tableName});`).all() as Array<{ name?: string }>;
+  return rows.some((row) => row.name === columnName);
+}
+
+function backfillPlanningAttemptGenerationIds(sqlite: any, logger: any): void {
+  const rows = sqlite
+    .query("SELECT id, planning_attempts AS planningAttempts FROM dags WHERE planning_attempts IS NOT NULL;")
+    .all() as Array<{ id: string; planningAttempts: string | null }>;
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const updateStmt = sqlite.prepare(
+    'UPDATE dags SET planning_attempts = ?, updated_at = (unixepoch()) WHERE id = ?;'
+  );
+
+  let updatedRows = 0;
+
+  for (const row of rows) {
+    if (!row.planningAttempts) {
+      continue;
+    }
+
+    try {
+      const attempts = JSON.parse(row.planningAttempts) as Array<Record<string, any>>;
+      if (!Array.isArray(attempts)) {
+        continue;
+      }
+
+      let changed = false;
+      for (const attempt of attempts) {
+        if (attempt?.generationId) {
+          continue;
+        }
+
+        const attemptGenerationId = attempt?.generationStats?.id;
+        if (typeof attemptGenerationId === 'string' && attemptGenerationId.length > 0) {
+          attempt.generationId = attemptGenerationId;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        updateStmt.run(JSON.stringify(attempts), row.id);
+        updatedRows += 1;
+      }
+    } catch {
+      // Ignore malformed rows and continue migrating best-effort.
+    }
+  }
+
+  if (updatedRows > 0) {
+    logger.info({ updatedRows }, 'Backfilled planning attempt generation IDs');
+  }
+}
+
+function runRuntimeMigrations(sqlite: any, logger: any): void {
+  if (!hasColumn(sqlite, 'sub_steps', 'generation_id')) {
+    sqlite.exec('ALTER TABLE sub_steps ADD COLUMN generation_id TEXT;');
+    logger.info('Applied migration: added sub_steps.generation_id');
+  }
+
+  sqlite.exec('CREATE INDEX IF NOT EXISTS idx_sub_steps_generation_id ON sub_steps(generation_id);');
+  sqlite.exec(
+    'CREATE INDEX IF NOT EXISTS idx_sub_steps_pending_stats ON sub_steps(execution_id, generation_id) WHERE generation_id IS NOT NULL AND (cost_usd IS NULL OR generation_stats IS NULL);'
+  );
+
+  sqlite.exec(
+    "UPDATE sub_steps SET generation_id = json_extract(generation_stats, '$.id') WHERE generation_id IS NULL AND generation_stats IS NOT NULL AND json_extract(generation_stats, '$.id') IS NOT NULL;"
+  );
+
+  backfillPlanningAttemptGenerationIds(sqlite, logger);
+}
+
 /**
  * Create and initialize database connection
  */
@@ -57,6 +133,7 @@ function createDatabase(dbPath: string, isMemoryDb: boolean): DrizzleDB {
 
     // Always initialize tables
     initializeTables(sqlite, logger);
+    runRuntimeMigrations(sqlite, logger);
 
     const db = drizzle(sqlite, { schema });
     logger.info(`Database initialized: ${dbPath}`);
