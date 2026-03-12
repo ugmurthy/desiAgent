@@ -62,6 +62,7 @@ export interface SubStep {
   } | null;
   costUsd: string | null;
   generationStats: Record<string, any> | null;
+  generationId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -416,6 +417,7 @@ export class ExecutionsService {
       usage: record.usage,
       costUsd: record.costUsd,
       generationStats: record.generationStats,
+      generationId: record.generationId,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     };

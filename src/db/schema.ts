@@ -1,4 +1,4 @@
-import { sqliteTable, sqliteView, text, integer, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, sqliteView, text, integer, uniqueIndex, index } from 'drizzle-orm/sqlite-core';
 import { relations } from 'drizzle-orm';
 import { sql } from 'drizzle-orm';
 
@@ -72,6 +72,7 @@ export const dags = sqliteTable('dags', {
   planningAttempts: text('planning_attempts', { mode: 'json' }).$type<Array<{
     attempt: number;
     reason: 'initial' | 'retry_gaps' | 'retry_parse_error' | 'retry_validation' | 'title_master';
+    generationId?: string;
     usage?: {
       promptTokens?: number;
       completionTokens?: number;
@@ -134,50 +135,60 @@ export const dagExecutions = sqliteTable('dag_executions', {
 /**
  * DAG Sub-Steps table
  */
-export const dagSubSteps = sqliteTable('sub_steps', {
-  id: text('id').primaryKey(),
-  executionId: text('execution_id')
-    .notNull()
-    .references(() => dagExecutions.id, { onDelete: 'cascade' }),
+export const dagSubSteps = sqliteTable(
+  'sub_steps',
+  {
+    id: text('id').primaryKey(),
+    executionId: text('execution_id')
+      .notNull()
+      .references(() => dagExecutions.id, { onDelete: 'cascade' }),
 
-  taskId: text('task_id').notNull(),
+    taskId: text('task_id').notNull(),
 
-  description: text('description').notNull(),
-  thought: text('thought').notNull(),
-  actionType: text('action_type', { enum: ['tool', 'inference'] }).notNull(),
+    description: text('description').notNull(),
+    thought: text('thought').notNull(),
+    actionType: text('action_type', { enum: ['tool', 'inference'] }).notNull(),
 
-  toolOrPromptName: text('tool_or_prompt_name').notNull(),
-  toolOrPromptParams: text('tool_or_prompt_params', { mode: 'json' }).$type<Record<string, any>>(),
+    toolOrPromptName: text('tool_or_prompt_name').notNull(),
+    toolOrPromptParams: text('tool_or_prompt_params', { mode: 'json' }).$type<Record<string, any>>(),
 
-  dependencies: text('dependencies', { mode: 'json' }).notNull().$type<string[]>(),
+    dependencies: text('dependencies', { mode: 'json' }).notNull().$type<string[]>(),
 
-  status: text('status', {
-    enum: ['pending', 'running', 'waiting', 'completed', 'failed', 'deleted']
-  }).notNull().default('pending'),
+    status: text('status', {
+      enum: ['pending', 'running', 'waiting', 'completed', 'failed', 'deleted']
+    }).notNull().default('pending'),
 
-  startedAt: integer('started_at', { mode: 'timestamp' }),
-  completedAt: integer('completed_at', { mode: 'timestamp' }),
-  durationMs: integer('duration_ms'),
+    startedAt: integer('started_at', { mode: 'timestamp' }),
+    completedAt: integer('completed_at', { mode: 'timestamp' }),
+    durationMs: integer('duration_ms'),
 
-  result: text('result', { mode: 'json' }).$type<any>(),
-  error: text('error'),
+    result: text('result', { mode: 'json' }).$type<any>(),
+    error: text('error'),
 
-  // Sub-step cost tracking
-  usage: text('usage', { mode: 'json' }).$type<{
-    promptTokens?: number;
-    completionTokens?: number;
-    totalTokens?: number;
-  }>(),
-  costUsd: text('cost_usd'),
-  generationStats: text('generation_stats', { mode: 'json' }).$type<Record<string, any>>(),
+    // Sub-step cost tracking
+    usage: text('usage', { mode: 'json' }).$type<{
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+    }>(),
+    costUsd: text('cost_usd'),
+    generationStats: text('generation_stats', { mode: 'json' }).$type<Record<string, any>>(),
+    generationId: text('generation_id'),
 
-  createdAt: integer('created_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch())`),
-  updatedAt: integer('updated_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(unixepoch())`),
-});
+    createdAt: integer('created_at', { mode: 'timestamp' })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer('updated_at', { mode: 'timestamp' })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => ({
+    generationIdIdx: index('idx_sub_steps_generation_id').on(table.generationId),
+    pendingStatsIdx: index('idx_sub_steps_pending_stats')
+      .on(table.executionId, table.generationId)
+      .where(sql`${table.generationId} is not null and (${table.costUsd} is null or ${table.generationStats} is null)`),
+  })
+);
 
 /**
  * Executions view - joins dagExecutions with dags to get dagTitle

@@ -143,6 +143,7 @@ export interface SubStep {
   } | null;
   costUsd: string | null;
   generationStats: Record<string, any> | null;
+  generationId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
