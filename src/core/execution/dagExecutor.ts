@@ -696,7 +696,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           this.logger.debug({ waveSize: readyTasks.length }, 'Batch updated wave tasks to running');
         }
 
-        await Promise.all(
+        const waveExecutionResults = await Promise.allSettled(
           readyTasks.map(async (task) => {
             const taskExecStartTime = Date.now();
             const waveResult: TaskWaveResult = { taskId: task.id, startTime: taskExecStartTime };
@@ -836,6 +836,15 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
               waveDurationMs: Date.now() - waveStartTime,
             }, 'Batch updated wave completed tasks');
           }
+        }
+
+        const waveFailure = waveExecutionResults.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected'
+        );
+        if (waveFailure) {
+          throw waveFailure.reason instanceof Error
+            ? waveFailure.reason
+            : new Error(String(waveFailure.reason));
         }
 
         this.emitEventIfEnabled(execConfig, {

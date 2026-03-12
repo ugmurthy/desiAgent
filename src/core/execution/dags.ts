@@ -50,7 +50,7 @@ export interface DagScheduler {
     scheduleActive: boolean;
     timezone?: string;
   }): void;
-  updateDAGSchedule(id: string, cronSchedule: string, scheduleActive: boolean): void;
+  updateDAGSchedule(id: string, cronSchedule: string, scheduleActive: boolean, timezone?: string): void;
   unregisterDAGSchedule(id: string): void;
 }
 
@@ -183,6 +183,20 @@ export class DAGsService {
     this.skipGenerationStats = deps.skipGenerationStats;
     this.skillRegistry = deps.skillRegistry;
     this.statsQueue = deps.statsQueue;
+  }
+
+  private registerScheduleIfActive(dagId: string, cronSchedule: string | null | undefined, scheduleActive: boolean, timezone: string): void {
+    if (!this.scheduler || !cronSchedule || !scheduleActive) {
+      return;
+    }
+
+    this.scheduler.registerDAGSchedule({
+      id: dagId,
+      cronSchedule,
+      scheduleActive,
+      timezone,
+    });
+    this.logger.info({ dagId, cronSchedule, timezone }, 'DAG schedule registered');
   }
 
   private buildGlobalContext(job: DecomposerJob): { formatted: string; totalTasks: number } {
@@ -657,15 +671,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
         this.logger.info({ dagId, agentName, goalText: showGoalText, cronSchedule, scheduleActive }, 'DAG saved to database');
 
-        if (this.scheduler && cronSchedule && scheduleActive) {
-          this.scheduler.registerDAGSchedule({
-            id: dagId,
-            cronSchedule,
-            scheduleActive,
-            timezone,
-          });
-          this.logger.info({ dagId, cronSchedule, timezone }, 'DAG schedule registered');
-        }
+        this.registerScheduleIfActive(dagId, cronSchedule, scheduleActive, timezone);
 
         // Fire-and-forget: update title and generation stats in the background
         const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
@@ -726,6 +732,8 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       }
 
       this.logger.info({ dagId, agentName }, 'Low-coverage DAG saved to database');
+
+      this.registerScheduleIfActive(dagId, cronSchedule, scheduleActive, timezone);
 
       // Fire-and-forget: update title and generation stats in the background
       const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
@@ -816,6 +824,22 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         }).where(eq(dags.id, dagId));
 
         await this.db.delete(dags).where(eq(dags.id, planningResult.dagId));
+
+        if (this.scheduler) {
+          this.scheduler.unregisterDAGSchedule(planningResult.dagId);
+
+          if (existingDag.cronSchedule && existingDag.scheduleActive) {
+            this.scheduler.registerDAGSchedule({
+              id: dagId,
+              cronSchedule: existingDag.cronSchedule,
+              scheduleActive: existingDag.scheduleActive,
+              timezone: existingDag.timezone || 'UTC',
+            });
+            this.logger.info({ dagId, cronSchedule: existingDag.cronSchedule, timezone: existingDag.timezone }, 'DAG schedule re-bound after clarification resume');
+          } else {
+            this.scheduler.unregisterDAGSchedule(dagId);
+          }
+        }
 
         this.logger.info({ dagId, newDagId: planningResult.dagId }, 'Merged resumed DAG into original');
         return { status: 'success', dagId };
@@ -1308,13 +1332,14 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       throw new Error('Failed to update DAG');
     }
 
-    if (this.scheduler && (updates.cronSchedule !== undefined || updates.scheduleActive !== undefined)) {
+    if (this.scheduler && (updates.cronSchedule !== undefined || updates.scheduleActive !== undefined || updates.timezone !== undefined)) {
       const finalSchedule = updates.cronSchedule ?? updated.cronSchedule;
       const finalActive = updates.scheduleActive ?? updated.scheduleActive;
+      const finalTimezone = updates.timezone ?? updated.timezone;
 
       if (finalSchedule && finalActive) {
-        this.scheduler.updateDAGSchedule(id, finalSchedule, finalActive);
-        this.logger.info({ dagId: id, cronSchedule: finalSchedule, scheduleActive: finalActive }, 'DAG schedule updated');
+        this.scheduler.updateDAGSchedule(id, finalSchedule, finalActive, finalTimezone || 'UTC');
+        this.logger.info({ dagId: id, cronSchedule: finalSchedule, scheduleActive: finalActive, timezone: finalTimezone }, 'DAG schedule updated');
       } else {
         this.scheduler.unregisterDAGSchedule(id);
         this.logger.info({ dagId: id }, 'DAG schedule unregistered');

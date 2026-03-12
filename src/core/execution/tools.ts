@@ -40,17 +40,13 @@ export class ToolsService {
    * List all available tools (with optional filtering)
    */
   async list(filter?: Record<string, any>): Promise<ToolDefinition[]> {
-    let tools = this.registry.getAllDefinitions();
+    let tools = this.registry
+      .getAllDefinitions()
+      .filter((t) => !this.isRestricted(t.function.name));
 
     if (filter?.name) {
-      tools = tools.filter((t) => (t.function.name === filter.name && this.isRestricted(t.function.name)));
-    } else {
-      tools = tools.filter((t) =>  !this.isRestricted(t.function.name));
+      tools = tools.filter((t) => t.function.name === filter.name);
     }
-
-   
-    
-    
 
     return tools;
   }

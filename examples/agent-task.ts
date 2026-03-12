@@ -16,6 +16,7 @@ async function main() {
     databasePath: process.env.DATABASE_PATH
   });
 
+  client.dags.createFromGoal({scheduleActive:true,cronSchedule:"0 * * * * *",goalText:"sd sds sd",agentName:"decompoerv9"})
   try {
     const checkerAgent = await client.agents.resolve(process.env.DEFAULT_DECOMPOSER_AGENT || "DecomposerV9");
     const result = await client.executeTask(checkerAgent,"create a web app: Pomodoro time in a single html file.");

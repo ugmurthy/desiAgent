@@ -8,11 +8,12 @@ import type { LLMProvider } from './types.js';
 import { OpenAIProvider } from './openai.js';
 import { OllamaProvider } from './ollama.js';
 import { OpenRouterProvider } from './openrouter.js';
+import { createHash } from 'crypto';
 import { getLogger } from '../../util/logger.js';
 
 /**
  * LLM Provider cache for reusing provider instances
- * Key format: "provider:model:maxTokens"
+ * Key format: "provider-scope:model:maxTokens:skipStats"
  */
 const providerCache = new Map<string, LLMProvider>();
 
@@ -41,7 +42,8 @@ export function createLLMProvider(
   const model = config.model || getDefaultModel(config.provider);
   const maxTokens = config.maxTokens || 4096;
   const skipStats = config.skipGenerationStats ? 'skip' : 'stats';
-  const cacheKey = `${config.provider}:${model}:${maxTokens}:${skipStats}`;
+  const providerScope = getProviderCacheScope(config);
+  const cacheKey = `${providerScope}:${model}:${maxTokens}:${skipStats}`;
 
   // Check cache first
   const cached = providerCache.get(cacheKey);
@@ -82,6 +84,32 @@ export function createLLMProvider(
   // Cache the provider
   providerCache.set(cacheKey, provider);
   return provider;
+}
+
+function getProviderCacheScope(config: {
+  provider: 'openai' | 'openrouter' | 'ollama';
+  apiKey?: string;
+  baseUrl?: string;
+}): string {
+  switch (config.provider) {
+    case 'openai':
+      return `openai:key=${fingerprint(config.apiKey)}`;
+    case 'openrouter':
+      return `openrouter:key=${fingerprint(config.apiKey)}:url=${normalizeBaseUrl(config.baseUrl)}`;
+    case 'ollama':
+      return `ollama:url=${normalizeBaseUrl(config.baseUrl || 'http://localhost:11434')}`;
+    default:
+      return `${config.provider}:default`;
+  }
+}
+
+function normalizeBaseUrl(baseUrl?: string): string {
+  const normalized = (baseUrl ?? '').trim().replace(/\/+$/, '');
+  return normalized || 'default';
+}
+
+function fingerprint(value?: string): string {
+  return createHash('sha256').update(value ?? '').digest('hex').slice(0, 12);
 }
 
 function getDefaultModel(provider: string): string {

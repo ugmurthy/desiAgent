@@ -29,6 +29,7 @@ import { createToolRegistry, ToolExecutor } from './core/tools/index.js';
 import { createLLMProvider, validateLLMSetup } from './core/providers/factory.js';
 import { SkillRegistry } from './core/skills/registry.js';
 import { StatsQueue } from './core/workers/statsQueue.js';
+import { NodeCronDagScheduler } from './core/execution/dagScheduler.js';
 
 /**
  * DesiAgent client implementation
@@ -45,6 +46,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
   private logger = getLogger();
   private isMemoryDb: boolean;
   private statsQueue?: StatsQueue;
+  private dagScheduler?: NodeCronDagScheduler;
 
   constructor(
     agents: AgentsService,
@@ -56,6 +58,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
     costs: CostsService,
     isMemoryDb: boolean = false,
     statsQueue?: StatsQueue,
+    dagScheduler?: NodeCronDagScheduler,
   ) {
     this.agents = agents;
     this.dags = dags;
@@ -66,6 +69,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
     this.costs = costs;
     this.isMemoryDb = isMemoryDb;
     this.statsQueue = statsQueue;
+    this.dagScheduler = dagScheduler;
   }
 
   async executeTask(_agent: any, _task: string, _files?: Buffer[]): Promise<any> {
@@ -77,6 +81,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
     if (this.isMemoryDb) {
       this.logger.warn('Shutting down in-memory database — all data will be lost');
     }
+    this.dagScheduler?.stopAll();
     await this.statsQueue?.terminate();
     this.logger.info('Shutting down desiAgent');
     closeDatabase();
@@ -186,12 +191,21 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       logger.info('Background stats worker started for OpenRouter');
     }
 
-    // Initialize DAGs service
-    const dagsService = new DAGsService({
+    // Initialize DAG scheduler and DAGs service
+    let dagsService!: DAGsService;
+    const dagScheduler = resolved.autoStartScheduler
+      ? new NodeCronDagScheduler({
+        db,
+        executeDAG: async (dagId: string) => dagsService.execute(dagId),
+      })
+      : undefined;
+
+    dagsService = new DAGsService({
       db,
       llmProvider,
       toolRegistry,
       agentsService,
+      scheduler: dagScheduler,
       artifactsDir: resolved.artifactsDir,
       staleExecutionMinutes: resolved.staleExecutionMinutes,
       apiKey: resolved.apiKey,
@@ -200,6 +214,13 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       skillRegistry,
       statsQueue,
     });
+
+    if (dagScheduler) {
+      await dagScheduler.hydrateFromDatabase();
+      logger.info('DAG scheduler started');
+    } else {
+      logger.info('DAG scheduler disabled by configuration');
+    }
 
     // Initialize artifacts service
     const artifactsService = new ArtifactsService(resolved.artifactsDir);
@@ -218,6 +239,7 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       costsService,
       resolved.isMemoryDb,
       statsQueue,
+      dagScheduler,
     );
 
     logger.info('desiAgent initialized successfully', {
@@ -329,6 +351,7 @@ export type {
 export { DAGsService } from './core/execution/dags.js';
 export { ExecutionsService } from './core/execution/executions.js';
 export { CostsService } from './core/execution/costs.js';
+export { NodeCronDagScheduler } from './core/execution/dagScheduler.js';
 export { AgentsService } from './core/execution/agents.js';
 export { ToolsService } from './core/execution/tools.js';
 export { SkillsService } from './core/execution/skills.js';
