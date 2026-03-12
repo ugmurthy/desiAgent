@@ -35,6 +35,7 @@ export interface PlanningUsageTotal {
 export interface PlanningAttempt {
   attempt: number;
   reason: 'initial' | 'retry_gaps' | 'retry_parse_error' | 'retry_validation' | 'title_master';
+  generationId?: string;
   usage?: {
     promptTokens?: number;
     completionTokens?: number;
@@ -53,6 +54,7 @@ export interface SubStepCost {
   taskId: string;
   actionType: string;
   toolOrPromptName: string;
+  generationId: string | null;
   usage: UsageInfo | null;
   costUsd: string | null;
 }
@@ -235,6 +237,7 @@ export class CostsService {
           taskId: s.taskId,
           actionType: s.actionType,
           toolOrPromptName: s.toolOrPromptName,
+          generationId: s.generationId ?? null,
           usage: s.usage as UsageInfo | null,
           costUsd: s.costUsd ?? null,
         })),

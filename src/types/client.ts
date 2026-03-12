@@ -239,6 +239,7 @@ export interface PlanningUsageTotal {
 export interface PlanningAttempt {
   attempt: number;
   reason: 'initial' | 'retry_gaps' | 'retry_parse_error' | 'retry_validation' | 'title_master';
+  generationId?: string;
   usage?: UsageInfo;
   costUsd?: number | null;
   errorMessage?: string;
@@ -264,6 +265,7 @@ export interface ExecutionCostBreakdown {
       taskId: string;
       actionType: string;
       toolOrPromptName: string;
+      generationId: string | null;
       usage: UsageInfo | null;
       costUsd: string | null;
     }>;
