@@ -86,6 +86,7 @@ export interface CreateDAGFromGoalOptions {
 interface PlanningAttempt {
   attempt: number;
   reason: 'initial' | 'retry_gaps' | 'retry_parse_error' | 'retry_validation' | 'title_master';
+  generationId?: string;
   usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
   costUsd?: number | null;
   errorMessage?: string;
@@ -441,6 +442,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         planningAttempts.push({
           attempt,
           reason: retryReason,
+          generationId: attemptGenerationId,
           usage: attemptUsage,
           costUsd: attemptCost,
           errorMessage,
@@ -504,6 +506,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         planningAttempts.push({
           attempt,
           reason: retryReason,
+          generationId: attemptGenerationId,
           usage: attemptUsage,
           costUsd: attemptCost,
           errorMessage: JSON.stringify(validatedResult.error.issues),
@@ -563,6 +566,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       planningAttempts.push({
         attempt,
         reason: retryReason,
+        generationId: attemptGenerationId,
         usage: attemptUsage,
         costUsd: attemptCost,
         generationStats: attemptGenStats,
@@ -617,7 +621,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
         // Fire-and-forget: update title and generation stats in the background
         const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
-        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, attemptGenerationId, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
+        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
         return {
           status: 'clarification_required',
@@ -675,7 +679,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
         // Fire-and-forget: update title and generation stats in the background
         const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
-        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, attemptGenerationId, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
+        this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
         return { status: 'success', dagId };
       }
@@ -737,7 +741,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
       // Fire-and-forget: update title and generation stats in the background
       const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
-      this.backgroundUpdateDag(dagId, attemptGenStatsPromise, attemptGenerationId, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
+      this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
       return { status: 'success', dagId };
     }
@@ -1185,6 +1189,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
               usage: result.usage,
               costUsd: result.costUsd?.toString(),
               generationStats: result.generationStats,
+              generationId: result.generationId,
               updatedAt: new Date(),
             })
             .where(eq(dagSubSteps.id, pendingSubStepId));
@@ -1486,6 +1491,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     abortSignal?: AbortSignal
   ): Promise<{
     title: string;
+    generationId?: string;
     usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
     costUsd?: number;
     generationStats?: Record<string, any>;
@@ -1513,6 +1519,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
       return {
         title,
+        generationId: titleResponse.generationId,
         usage: titleResponse.usage,
         costUsd: (titleResponse as any).costUsd,
         generationStats: (titleResponse as any).generationStats,
@@ -1529,9 +1536,9 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
   private backgroundUpdateDag(
     dagId: string,
     genStatsPromise: Promise<{ generationStats?: Record<string, any>; costUsd?: number }> | undefined,
-    generationId: string | undefined,
     titlePromise: Promise<{
       title: string;
+      generationId?: string;
       usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
       costUsd?: number;
       generationStats?: Record<string, any>;
@@ -1541,16 +1548,9 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     planningCostTotal: number,
     attempt: number,
   ): void {
-    // When statsQueue is available, offload generation stats to the background worker
-    if (this.statsQueue && generationId) {
-      this.statsQueue.enqueue({
-        table: 'dags',
-        id: dagId,
-        generationId,
-        attemptIndex: planningAttempts.length - 1,
-      });
-
-      // Still handle title in main thread (per requirement)
+    // When statsQueue is available, persist title attempt details and let periodic
+    // reconciliation fill costs/stats using persisted generation IDs.
+    if (this.statsQueue) {
       const run = async () => {
         const updateData: Record<string, any> = {};
 
@@ -1561,6 +1561,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             planningAttempts.push({
               attempt,
               reason: 'title_master',
+              generationId: titleResult.generationId,
               usage: titleResult.usage,
               costUsd: titleResult.costUsd,
               generationStats: titleResult.generationStats,
@@ -1585,7 +1586,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
         try {
           await this.db.update(dags).set(updateData).where(eq(dags.id, dagId));
-          this.logger.info({ dagId, dagTitle: updateData.dagTitle }, 'Background: DAG updated with title (stats deferred to worker)');
+          this.logger.info({ dagId, dagTitle: updateData.dagTitle }, 'Background: DAG updated with title (stats reconciled periodically)');
         } catch (err) {
           this.logger.error({ err, dagId }, 'Background: failed to update DAG row');
         }
@@ -1624,6 +1625,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           planningAttempts.push({
             attempt,
             reason: 'title_master',
+            generationId: titleResult.generationId,
             usage: titleResult.usage,
             costUsd: titleResult.costUsd,
             generationStats: titleResult.generationStats,
