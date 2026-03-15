@@ -91,6 +91,15 @@ function parseArgs(argv: string[]): ParsedArgs {
 }
 
 async function main() {
+  
+
+  const { agentName, updateFile, createFile, model, provider, raw, help } = parseArgs(process.argv);
+
+  if (help) {
+    console.log(USAGE);
+    return;
+  }
+  
   const client = await setupDesiAgent({
     llmProvider: 'openrouter',
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
@@ -99,12 +108,7 @@ async function main() {
     databasePath: process.env.DATABASE_PATH
   });
 
-  const { agentName, updateFile, createFile, model, provider, raw, help } = parseArgs(process.argv);
-
-  if (help) {
-    console.log(USAGE);
-    return;
-  }
+  
 
   try {
     if (raw) {
@@ -168,6 +172,8 @@ async function main() {
     }
   } catch (error) {
     console.error('Error:', error);
+  } finally {
+    client.shutdown();
   }
 }
 

@@ -30,6 +30,8 @@ async function main() {
    
   } catch (error) {
     console.error('Error listing tools:', error);
+  } finally {
+    client.shutdown();
   }
 }
 

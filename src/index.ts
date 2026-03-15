@@ -9,7 +9,7 @@ import type { DesiAgentConfig } from './types/config.js';
 import { DesiAgentConfigSchema, resolveConfig } from './types/config.js';
 import { z } from 'zod';
 import packageJson from '../package.json' with { type: 'json' };
-import type { DesiAgentClient } from './types/index.js';
+import type { DesiAgentClient, Agent } from './types/index.js';
 import {
   ConfigurationError,
   InitializationError,
@@ -27,9 +27,20 @@ import { ArtifactsService } from './core/execution/artifacts.js';
 import { CostsService } from './core/execution/costs.js';
 import { createToolRegistry, ToolExecutor } from './core/tools/index.js';
 import { createLLMProvider, validateLLMSetup } from './core/providers/factory.js';
+import type { Message, ImageContentPart, TextContentPart, MessageContent, LLMProvider as LLMProviderInterface } from './core/providers/types.js';
+import type { ResolvedConfig } from './types/config.js';
 import { SkillRegistry } from './core/skills/registry.js';
 import { StatsQueue } from './core/workers/statsQueue.js';
 import { NodeCronDagScheduler } from './core/execution/dagScheduler.js';
+
+function detectImageMime(buf: Buffer): string | null {
+  if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
+      buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return 'image/webp';
+  return null;
+}
 
 /**
  * DesiAgent client implementation
@@ -47,6 +58,8 @@ class DesiAgentClientImpl implements DesiAgentClient {
   private isMemoryDb: boolean;
   private statsQueue?: StatsQueue;
   private dagScheduler?: NodeCronDagScheduler;
+  private _llmProvider!: LLMProviderInterface;
+  private _resolved!: ResolvedConfig;
 
   constructor(
     agents: AgentsService,
@@ -72,9 +85,67 @@ class DesiAgentClientImpl implements DesiAgentClient {
     this.dagScheduler = dagScheduler;
   }
 
-  async executeTask(_agent: any, _task: string, _files?: Buffer[]): Promise<any> {
-    // TODO: Phase 2+ - Implement task execution with agent orchestration
-    throw new Error('Task execution not yet implemented');
+  async executeTask(agent: Agent, task: string, files?: Buffer[]): Promise<any> {
+    const provider = agent.provider || this._resolved.llmProvider;
+    const model = agent.model || this._resolved.modelName;
+    const temperature = agent.constraints?.temperature ?? 0.7;
+    const maxTokens = agent.constraints?.maxTokens;
+
+    this.logger.info({
+      agentName: agent.name,
+      provider,
+      model,
+    }, 'Executing task');
+
+    const llmProvider = createLLMProvider({
+      provider,
+      model,
+      apiKey: this._resolved.apiKey,
+      baseUrl: this._resolved.ollamaBaseUrl,
+      skipGenerationStats: this._resolved.skipGenerationStats,
+    });
+
+    let userContent: MessageContent = task;
+
+    if (files && files.length > 0) {
+      const contentParts: (TextContentPart | ImageContentPart)[] = [
+        { type: 'text', text: task },
+      ];
+      for (const buf of files) {
+        const mimeType = detectImageMime(buf) || 'image/jpeg';
+        const dataUrl = `data:${mimeType};base64,${buf.toString('base64')}`;
+        contentParts.push({
+          type: 'image_url',
+          image_url: { url: dataUrl, detail: 'auto' },
+        });
+      }
+      userContent = contentParts;
+      this.logger.info({ fileCount: files.length }, 'Attached files to task message');
+    }
+
+    const messages: Message[] = [
+      { role: 'system', content: agent.systemPrompt },
+      { role: 'user', content: userContent },
+    ];
+
+    const response = await llmProvider.chat({
+      messages,
+      temperature,
+      maxTokens,
+    });
+
+    this.logger.info({ agentName: agent.name }, 'Task execution completed');
+
+    return {
+      agentName: agent.name,
+      agentVersion: agent.version,
+      provider,
+      model,
+      response: response.content,
+      usage: response.usage,
+      costUsd: response.costUsd,
+      finishReason: 'stop',
+    };
   }
 
   async shutdown(): Promise<void> {
@@ -253,8 +324,8 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
 
     // Store internal services on client
     (client as any)._toolExecutor = toolExecutor;
-    (client as any)._llmProvider = llmProvider;
-    (client as any)._resolved = resolved;
+    client._llmProvider = llmProvider;
+    client._resolved = resolved;
 
     return client;
   } catch (error) {

@@ -12,9 +12,10 @@ function ensureLogDir(dir: string): void {
   }
 }
 
-function createFileTransport(logDir: string) {
+function createFileTransport(logDir: string, level: string) {
   return {
     target: 'pino-roll',
+    level,
     options: {
       file: join(logDir, 'app'),
       frequency: 'daily',
@@ -24,9 +25,10 @@ function createFileTransport(logDir: string) {
   };
 }
 
-function createConsoleTransport() {
+function createConsoleTransport(level: string) {
   return {
     target: 'pino-pretty',
+    level,
     options: {
       colorize: true,
       translateTime: 'SYS:standard',
@@ -53,16 +55,16 @@ export function initializeLogger(
   const options: LoggerOptions = { level: levelToUse };
 
   if (dest === 'console') {
-    options.transport = createConsoleTransport();
+    options.transport = createConsoleTransport(levelToUse);
   } else if (dest === 'file') {
     ensureLogDir(dir);
-    options.transport = createFileTransport(dir);
+    options.transport = createFileTransport(dir, levelToUse);
   } else if (dest === 'both') {
     ensureLogDir(dir);
     options.transport = {
       targets: [
-        createConsoleTransport(),
-        createFileTransport(dir),
+        createConsoleTransport(levelToUse),
+        createFileTransport(dir, levelToUse),
       ],
     };
   }

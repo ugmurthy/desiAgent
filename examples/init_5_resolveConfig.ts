@@ -39,4 +39,6 @@ try {
   (resolved as any).logLevel = 'debug';
 } catch {
   console.log('\n✅ Config is frozen — cannot mutate');
+} finally {
+  console.log('\n✅ Done');
 }

@@ -54,3 +54,5 @@ for (const serviceName of services) {
   });
   console.log();
 }
+
+await client.shutdown();

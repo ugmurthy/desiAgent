@@ -17,15 +17,15 @@ export class ToolsService {
   private restrictedList: Set<string>;
 
   private static readonly DEFAULT_RESTRICTED: string[] = [
-    'bash',
+  //  'bash',
   //  'readFile',
   //  'writeFile',
-    'fetchPage',
-    'webSearch',
-    'fetchURLs',
-    'glob',
-    'grep',
-    'edit',
+  //  'fetchPage',
+  //  'webSearch',
+  //  'fetchURLs',
+  //  'glob',
+  //  'grep',
+  //  'edit',
   //  'sendEmail',
   //  'readEmail',
     'sendWebhook',
