@@ -17,7 +17,6 @@ import {
 import { initializeLogger, getLogger } from './util/logger.js';
 import { getDatabase, closeDatabase } from './db/client.js';
 import { seedAgents } from './services/initDB.js';
-import { Database } from 'bun:sqlite';
 import { AgentsService } from './core/execution/agents.js';
 import { DAGsService } from './core/execution/dags.js';
 import { ExecutionsService } from './core/execution/executions.js';
@@ -58,7 +57,7 @@ class DesiAgentClientImpl implements DesiAgentClient {
   private isMemoryDb: boolean;
   private statsQueue?: StatsQueue;
   private dagScheduler?: NodeCronDagScheduler;
-  private _llmProvider!: LLMProviderInterface;
+  //private _llmProvider!: LLMProviderInterface;
   private _resolved!: ResolvedConfig;
 
   constructor(
@@ -210,7 +209,7 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
 
     // Seed agents for in-memory databases
     if (resolved.isMemoryDb) {
-      const sqlite = (db as any).$client as Database;
+      const sqlite = (db as any).$client as any;
       const seeded = seedAgents(sqlite);
       logger.info({ agentsSeeded: seeded }, 'In-memory database seeded');
     }

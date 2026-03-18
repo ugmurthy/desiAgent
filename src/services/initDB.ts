@@ -3,11 +3,11 @@
  * Programmatically creates a SQLite database with all tables from the schema
  */
 
-import { Database } from 'bun:sqlite';
 import { existsSync, unlinkSync, mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import type { SQLiteTable, SQLiteColumn } from 'drizzle-orm/sqlite-core';
+import { Database } from '../db/sqlite.js';
 import * as schema from '../db/schema.js';
 import { agentsSeedData } from './agentsSeedData.js';
 
@@ -195,7 +195,7 @@ export function generateAllSQL(): { sql: string; tableNames: string[] } {
   return { sql: statements.join('\n\n'), tableNames };
 }
 
-export function seedAgents(sqlite: Database): number {
+export function seedAgents(sqlite: any): number {
   const insertStmt = sqlite.prepare(`
     INSERT INTO agents (id, name, version, prompt_template, provider, model, active, metadata, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

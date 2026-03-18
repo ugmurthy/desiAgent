@@ -107,7 +107,8 @@ describe('OpenAIProvider', () => {
           messages: [{ role: 'user', content: 'Hi' }],
           temperature: 0.5,
           max_tokens: 100,
-        })
+        }),
+        expect.objectContaining({ signal: undefined })
       );
     });
 
@@ -124,7 +125,8 @@ describe('OpenAIProvider', () => {
         expect.objectContaining({
           temperature: 0.7,
           max_tokens: 4096,
-        })
+        }),
+        expect.anything()
       );
     });
 
@@ -177,7 +179,7 @@ describe('OpenAIProvider', () => {
   });
 
   describe('callWithTools', () => {
-    it('converts tools to OpenAI format', async () => {
+    it('passes tools through to OpenAI', async () => {
       mockClient.chat.completions.create.mockResolvedValueOnce({
         choices: [
           {
@@ -195,45 +197,29 @@ describe('OpenAIProvider', () => {
         },
       });
 
+      const toolDef = {
+        type: 'function' as const,
+        function: {
+          name: 'bash',
+          description: 'Run bash commands',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { type: 'string', description: 'The command' },
+            },
+            required: ['command'],
+          },
+        },
+      };
+
       await provider.callWithTools({
         messages: [{ role: 'user', content: 'Help' }],
-        tools: [
-          {
-            name: 'bash',
-            description: 'Run bash commands',
-            parameters: [
-              {
-                name: 'command',
-                type: 'string',
-                description: 'The command',
-                required: true,
-              },
-            ],
-          },
-        ],
+        tools: [toolDef],
       });
 
       const call = mockClient.chat.completions.create.mock.calls[0][0];
       expect(call.tools).toBeDefined();
-      expect(call.tools[0]).toEqual(
-        expect.objectContaining({
-          type: 'function',
-          function: expect.objectContaining({
-            name: 'bash',
-            description: 'Run bash commands',
-            parameters: expect.objectContaining({
-              type: 'object',
-              properties: {
-                command: {
-                  type: 'string',
-                  description: 'The command',
-                },
-              },
-              required: ['command'],
-            }),
-          }),
-        })
-      );
+      expect(call.tools[0]).toEqual(toolDef);
     });
 
     it('parses tool calls from response', async () => {
@@ -259,13 +245,7 @@ describe('OpenAIProvider', () => {
 
       const result = await provider.callWithTools({
         messages: [{ role: 'user', content: 'List files' }],
-        tools: [
-          {
-            name: 'bash',
-            description: 'Run bash',
-            parameters: [],
-          },
-        ],
+        tools: [],
       });
 
       expect(result.toolCalls).toEqual([
@@ -318,13 +298,7 @@ describe('OpenAIProvider', () => {
 
       const result = await provider.callWithTools({
         messages: [{ role: 'user', content: 'Run' }],
-        tools: [
-          {
-            name: 'bash',
-            description: 'Run',
-            parameters: [],
-          },
-        ],
+        tools: [],
       });
 
       expect(result.finishReason).toBe('tool_calls');
@@ -354,13 +328,7 @@ describe('OpenAIProvider', () => {
       await expect(
         provider.callWithTools({
           messages: [{ role: 'user', content: 'Run' }],
-          tools: [
-            {
-              name: 'bash',
-              description: 'Run',
-              parameters: [],
-            },
-          ],
+          tools: [],
         })
       ).rejects.toThrow();
     });

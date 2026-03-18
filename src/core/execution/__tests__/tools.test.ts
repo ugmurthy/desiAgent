@@ -18,35 +18,43 @@ describe('ToolsService', () => {
   });
 
   describe('list', () => {
-    it('returns all available tools', async () => {
+    it('returns all available (non-restricted) tools', async () => {
       const tools = await service.list();
 
       expect(Array.isArray(tools)).toBe(true);
-      expect(tools.length).toBeGreaterThanOrEqual(4);
+      // 12 default tools minus 1 restricted (sendWebhook) = 11
+      expect(tools.length).toBe(11);
     });
 
     it('filters by tool name', async () => {
       const filtered = await service.list({ name: 'bash' });
 
       expect(filtered.length).toBe(1);
-      expect(filtered[0]?.name).toBe('bash');
+      expect(filtered[0]?.function.name).toBe('bash');
     });
 
-    it('filters by tag', async () => {
-      // Note: default tools may not have tags, so this tests the filtering logic
-      const filtered = await service.list({ tag: 'nonexistent' });
+    it('returns empty when filtering by unknown name', async () => {
+      const filtered = await service.list({ name: 'nonexistent' });
 
-      expect(Array.isArray(filtered)).toBe(true);
+      expect(filtered.length).toBe(0);
     });
 
-    it('returns tools with schema info', async () => {
+    it('returns tools with correct ToolDefinition shape', async () => {
       const tools = await service.list();
 
       tools.forEach((tool) => {
-        expect(tool.name).toBeDefined();
-        expect(tool.description).toBeDefined();
-        expect(tool.parameters).toBeDefined();
+        expect(tool.type).toBe('function');
+        expect(tool.function.name).toBeDefined();
+        expect(tool.function.description).toBeDefined();
+        expect(tool.function.parameters).toBeDefined();
       });
+    });
+
+    it('excludes restricted tools', async () => {
+      const tools = await service.list();
+      const names = tools.map((t) => t.function.name);
+
+      expect(names).not.toContain('sendWebhook');
     });
   });
 
@@ -54,8 +62,8 @@ describe('ToolsService', () => {
     it('retrieves tool by name', async () => {
       const tool = await service.get('bash');
 
-      expect(tool).toBeDefined();
-      expect(tool?.name).toBe('bash');
+      expect(tool).not.toBeNull();
+      expect(tool?.function.name).toBe('bash');
     });
 
     it('returns null for non-existent tool', async () => {
@@ -64,92 +72,99 @@ describe('ToolsService', () => {
       expect(tool).toBeNull();
     });
 
+    it('returns null for restricted tool', async () => {
+      const tool = await service.get('sendWebhook');
+
+      expect(tool).toBeNull();
+    });
+
     it('returns tool with full schema', async () => {
       const tool = await service.get('bash');
 
-      expect(tool?.description).toBeDefined();
-      expect(tool?.parameters).toBeDefined();
+      expect(tool?.type).toBe('function');
+      expect(tool?.function.description).toBeDefined();
+      expect(tool?.function.parameters).toBeDefined();
     });
   });
 
   describe('tool discovery', () => {
     it('includes bash tool', async () => {
       const bash = await service.get('bash');
-      expect(bash).toBeDefined();
+      expect(bash).not.toBeNull();
     });
 
     it('includes readFile tool', async () => {
       const readFile = await service.get('readFile');
-      expect(readFile).toBeDefined();
+      expect(readFile).not.toBeNull();
     });
 
     it('includes writeFile tool', async () => {
       const writeFile = await service.get('writeFile');
-      expect(writeFile).toBeDefined();
+      expect(writeFile).not.toBeNull();
     });
 
     it('includes fetchPage tool', async () => {
       const fetchPage = await service.get('fetchPage');
-      expect(fetchPage).toBeDefined();
+      expect(fetchPage).not.toBeNull();
     });
   });
 
   describe('bash tool schema', () => {
-    it('has correct parameters', async () => {
+    it('has command parameter', async () => {
       const bash = await service.get('bash');
+      const props = bash?.function.parameters?.properties;
 
-      expect(bash?.parameters).toContainEqual(
-        expect.objectContaining({
-          name: 'command',
-          type: 'string',
-        })
-      );
+      expect(props).toHaveProperty('command');
+      expect(props?.command?.type).toBe('string');
     });
 
     it('includes optional parameters', async () => {
       const bash = await service.get('bash');
+      const props = bash?.function.parameters?.properties ?? {};
 
-      const params = bash?.parameters || [];
-      const hasCwd = params.some((p) => p.name === 'cwd');
-      const hasTimeout = params.some((p) => p.name === 'timeoutMs');
-
-      expect(hasCwd || hasTimeout).toBe(true);
+      expect('cwd' in props || 'timeoutMs' in props).toBe(true);
     });
   });
 
   describe('readFile tool schema', () => {
     it('has path parameter', async () => {
       const readFile = await service.get('readFile');
+      const props = readFile?.function.parameters?.properties;
 
-      expect(readFile?.parameters).toContainEqual(
-        expect.objectContaining({
-          name: 'path',
-          type: 'string',
-        })
-      );
+      expect(props).toHaveProperty('path');
+      expect(props?.path?.type).toBe('string');
     });
   });
 
   describe('writeFile tool schema', () => {
     it('has path and content parameters', async () => {
       const writeFile = await service.get('writeFile');
-      const params = writeFile?.parameters || [];
+      const props = writeFile?.function.parameters?.properties ?? {};
 
-      expect(params.some((p) => p.name === 'path')).toBe(true);
-      expect(params.some((p) => p.name === 'content')).toBe(true);
+      expect('path' in props).toBe(true);
+      expect('content' in props).toBe(true);
     });
   });
 
   describe('fetchPage tool schema', () => {
     it('has url parameter', async () => {
       const fetchPage = await service.get('fetchPage');
+      const props = fetchPage?.function.parameters?.properties;
 
-      expect(fetchPage?.parameters).toContainEqual(
-        expect.objectContaining({
-          name: 'url',
-          type: 'string',
-        })
-      );
+      expect(props).toHaveProperty('url');
+      expect(props?.url?.type).toBe('string');
+    });
+  });
+
+  describe('isRestricted / isAllowed', () => {
+    it('reports sendWebhook as restricted', () => {
+      expect(service.isRestricted('sendWebhook')).toBe(true);
+      expect(service.isAllowed('sendWebhook')).toBe(false);
+    });
+
+    it('reports bash as allowed', () => {
+      expect(service.isRestricted('bash')).toBe(false);
+      expect(service.isAllowed('bash')).toBe(true);
     });
   });
 });

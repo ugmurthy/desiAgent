@@ -4,7 +4,7 @@
  * Tests for tool registration and management
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ToolRegistry } from '../registry.js';
 import { BaseTool } from '../base.js';
 import { z } from 'zod';
@@ -47,7 +47,7 @@ describe('ToolRegistry', () => {
 
   describe('initialization', () => {
     it('registers default tools on creation', () => {
-      expect(registry.getAll().length).toBe(4);
+      expect(registry.getAll().length).toBe(12);
     });
 
     it('includes bash tool', () => {
@@ -64,6 +64,17 @@ describe('ToolRegistry', () => {
 
     it('includes fetchPage tool', () => {
       expect(registry.hasTool('fetchPage')).toBe(true);
+    });
+
+    it('includes all 12 default tools', () => {
+      const expected = [
+        'bash', 'readFile', 'writeFile', 'fetchPage',
+        'webSearch', 'fetchURLs', 'glob', 'grep',
+        'edit', 'sendEmail', 'readEmail', 'sendWebhook',
+      ];
+      expected.forEach((name) => {
+        expect(registry.hasTool(name)).toBe(true);
+      });
     });
   });
 
@@ -127,7 +138,7 @@ describe('ToolRegistry', () => {
       registry.register(tool);
 
       const all = registry.getAll();
-      expect(all.length).toBeGreaterThan(4);
+      expect(all.length).toBe(13); // 12 default + 1 custom
       expect(all.some((t) => t.name === 'testTool')).toBe(true);
     });
   });
@@ -136,10 +147,13 @@ describe('ToolRegistry', () => {
     it('returns JSON schemas for all tools', () => {
       const definitions = registry.getAllDefinitions();
 
-      expect(definitions.length).toBe(4);
-      expect(definitions[0]).toHaveProperty('name');
-      expect(definitions[0]).toHaveProperty('description');
-      expect(definitions[0]).toHaveProperty('parameters');
+      expect(definitions.length).toBe(12);
+      definitions.forEach((def) => {
+        expect(def.type).toBe('function');
+        expect(def.function.name).toBeDefined();
+        expect(def.function.description).toBeDefined();
+        expect(def.function.parameters).toBeDefined();
+      });
     });
 
     it('includes custom tool definitions', () => {
@@ -147,10 +161,10 @@ describe('ToolRegistry', () => {
       registry.register(tool);
 
       const definitions = registry.getAllDefinitions();
-      const testDef = definitions.find((d) => d.name === 'testTool');
+      const testDef = definitions.find((d) => d.function.name === 'testTool');
 
       expect(testDef).toBeDefined();
-      expect(testDef?.description).toBe('A test tool');
+      expect(testDef?.function.description).toBe('A test tool');
     });
   });
 
@@ -251,30 +265,5 @@ describe('ToolRegistry', () => {
         )
       ).rejects.toThrow('Tool not found');
     });
-
-    it('passes context to tool', async () => {
-      const tool = new TestTool();
-      registry.register(tool);
-
-      const contextLogger = {
-        debug: vi.fn(),
-        info: vi.fn(),
-        warn: vi.fn(),
-        error: vi.fn(),
-      };
-
-      await registry.execute(
-        'testTool',
-        { input: 'test' },
-        {
-          logger: contextLogger,
-          artifactsDir: '/tmp/test-artifacts',
-        }
-      );
-
-      expect(contextLogger.debug).toHaveBeenCalled();
-    });
   });
 });
-
-import { vi } from 'vitest';

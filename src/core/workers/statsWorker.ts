@@ -11,7 +11,7 @@
 declare var self: Worker;
 
 import { drizzle } from 'drizzle-orm/bun-sqlite';
-import { Database } from 'bun:sqlite';
+import { Database } from '../../db/sqlite.js';
 import { eq, and, sql } from 'drizzle-orm';
 import * as schema from '../../db/schema.js';
 import { dags, dagExecutions, dagSubSteps } from '../../db/schema.js';

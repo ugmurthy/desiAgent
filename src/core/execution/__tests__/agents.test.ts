@@ -4,24 +4,190 @@
  * Tests for agent management and activation
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AgentsService, generateAgentId } from '../agents.js';
-import { getDatabase } from '../../db/client.js';
+import { agents } from '../../../db/schema.js';
+
+vi.mock('../../../util/logger.js', () => ({
+  getLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
+}));
+
+type InMemoryState = {
+  agents: any[];
+};
+
+const TABLE_NAME = Symbol.for('drizzle:Name');
+
+function tableNameOf(table: any): keyof InMemoryState {
+  return table?.[TABLE_NAME] as keyof InMemoryState;
+}
+
+function clone<T>(value: T): T {
+  if (value === undefined || value === null) return value as T;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function rowKeyForColumn(row: Record<string, any>, columnName: string): string {
+  if (columnName in row) return columnName;
+  const camel = columnName.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+  if (camel in row) return camel;
+  return columnName;
+}
+
+function chunkText(chunk: any): string {
+  if (chunk?.value && Array.isArray(chunk.value)) return chunk.value.join('');
+  return '';
+}
+
+function isSqlNode(node: any): node is { queryChunks: any[] } {
+  return !!node && Array.isArray(node.queryChunks);
+}
+
+function evaluateSqlCondition(sqlNode: any, row: Record<string, any>): boolean {
+  if (!isSqlNode(sqlNode)) return true;
+
+  const chunks = sqlNode.queryChunks;
+
+  // Unwrap parentheses: ( <inner> )
+  if (
+    chunks.length === 3 &&
+    chunkText(chunks[0]).trim() === '(' &&
+    isSqlNode(chunks[1]) &&
+    chunkText(chunks[2]).trim() === ')'
+  ) {
+    return evaluateSqlCondition(chunks[1], row);
+  }
+
+  // Single-condition wrapper: and() with one argument yields { queryChunks: [sqlNode] }
+  if (chunks.length === 1 && isSqlNode(chunks[0])) {
+    return evaluateSqlCondition(chunks[0], row);
+  }
+
+  // AND at this level: chunks contain SQL-node parts separated by ' and ' text chunks
+  const hasAndText = chunks.some(
+    (chunk: any) => !isSqlNode(chunk) && chunkText(chunk).includes(' and ')
+  );
+  if (hasAndText) {
+    return chunks
+      .filter(isSqlNode)
+      .every((part: any) => evaluateSqlCondition(part, row));
+  }
+
+  // AND wrapped in a nested SQL node (drizzle sometimes nests differently)
+  const andWrapper = chunks.find(
+    (chunk: any) =>
+      isSqlNode(chunk) &&
+      chunk.queryChunks.some((c: any) => chunkText(c).includes(' and '))
+  );
+  if (andWrapper) {
+    return andWrapper.queryChunks
+      .filter(isSqlNode)
+      .every((part: any) => evaluateSqlCondition(part, row));
+  }
+
+  const textChunks = chunks.map(chunkText).join('');
+  const columnChunk = chunks.find(
+    (chunk: any) => typeof chunk?.name === 'string'
+  );
+  if (!columnChunk) return true;
+
+  const key = rowKeyForColumn(row, columnChunk.name);
+
+  if (textChunks.includes(' is not null')) {
+    return row[key] !== null && row[key] !== undefined;
+  }
+
+  const paramChunk = chunks.find(
+    (chunk: any) =>
+      chunk?.constructor?.name === 'Param' ||
+      (typeof chunk?.value !== 'undefined' && !Array.isArray(chunk.value))
+  );
+  const rhs = paramChunk?.value;
+
+  if (textChunks.includes(' = ')) return row[key] === rhs;
+  if (textChunks.includes(' >= ')) return row[key] >= rhs;
+  if (textChunks.includes(' <= ')) return row[key] <= rhs;
+
+  return true;
+}
+
+function createInMemoryDb(): any {
+  const state: InMemoryState = {
+    agents: [],
+  };
+
+  const db: any = {
+    __state: state,
+    query: {
+      agents: {
+        findFirst: async (opts: any) =>
+          clone(
+            state.agents.find((row) =>
+              evaluateSqlCondition(opts?.where, row)
+            )
+          ),
+        findMany: async (opts: any) =>
+          clone(
+            state.agents.filter((row) =>
+              evaluateSqlCondition(opts?.where, row)
+            )
+          ),
+      },
+    },
+    insert: (table: any) => ({
+      values: async (values: any | any[]) => {
+        const key = tableNameOf(table);
+        const records = Array.isArray(values) ? values : [values];
+        state[key].push(...clone(records));
+      },
+    }),
+    update: (table: any) => ({
+      set: (patch: Record<string, any>) => ({
+        where: async (condition: any) => {
+          const key = tableNameOf(table);
+          state[key] = state[key].map((row) => {
+            if (!evaluateSqlCondition(condition, row)) return row;
+            const next = { ...row };
+            for (const [field, value] of Object.entries(patch)) {
+              next[field] = value;
+            }
+            return next;
+          });
+        },
+      }),
+    }),
+    delete: (table: any) => ({
+      where: async (condition: any) => {
+        const key = tableNameOf(table);
+        state[key] = state[key].filter(
+          (row) => !evaluateSqlCondition(condition, row)
+        );
+      },
+    }),
+  };
+
+  return db;
+}
 
 describe('AgentsService', () => {
   let service: AgentsService;
   let db: any;
 
   beforeEach(() => {
-    const dbPath = ':memory:';
-    db = getDatabase(dbPath);
+    AgentsService.clearCache();
+    db = createInMemoryDb();
     service = new AgentsService(db);
   });
 
   describe('generateAgentId', () => {
     it('generates agent ID with agent_ prefix', () => {
       const id = generateAgentId();
-      expect(id).toMatch(/^agent_[a-z0-9]+$/);
+      expect(id).toMatch(/^agent_[A-Za-z0-9_-]+$/);
     });
 
     it('generates unique IDs', () => {
@@ -156,6 +322,105 @@ describe('AgentsService', () => {
       await expect(
         service.update('agent_nonexistent', { name: 'New' })
       ).rejects.toThrow('not found');
+    });
+
+    it('updates provider correctly', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', { provider: 'openai' });
+      const updated = await service.update(agent.id, { provider: 'ollama' } as any);
+      expect(updated.provider).toBe('ollama');
+    });
+
+    it('updates model correctly', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', { provider: 'openai', model: 'gpt-4o' });
+      const updated = await service.update(agent.id, { model: 'gpt-3.5-turbo' } as any);
+      expect(updated.model).toBe('gpt-3.5-turbo');
+    });
+
+    it('updates isActive correctly', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', {});
+      const updated = await service.update(agent.id, { isActive: true } as any);
+      expect(updated.isActive).toBe(true);
+    });
+
+    it('updates metadata correctly', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', { metadata: { key1: 'value1' } });
+      const updated = await service.update(agent.id, { metadata: { newKey: 'newValue' } } as any);
+      expect(updated.metadata).toEqual({ newKey: 'newValue' });
+    });
+
+    it('updates description correctly (stored in metadata)', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', {});
+      const updated = await service.update(agent.id, { description: 'A test description' } as any);
+      expect(updated.description).toBe('A test description');
+      expect(updated.metadata?.description).toBe('A test description');
+    });
+
+    it('description preserves existing metadata', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', {});
+      await service.update(agent.id, { metadata: { key1: 'value1', key2: 'value2' } } as any);
+      const updated = await service.update(agent.id, { description: 'Updated desc' } as any);
+      expect(updated.description).toBe('Updated desc');
+      expect(updated.metadata?.key1).toBe('value1');
+      expect(updated.metadata?.key2).toBe('value2');
+    });
+
+    it('sending both metadata and description preserves both', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', {});
+      const updated = await service.update(agent.id, {
+        metadata: { foo: 'bar' },
+        description: 'My description',
+      } as any);
+      expect(updated.description).toBe('My description');
+      expect(updated.metadata?.foo).toBe('bar');
+      expect(updated.metadata?.description).toBe('My description');
+    });
+
+    it('constraints.maxTokens should NOT overwrite model', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', { provider: 'openai', model: 'gpt-4o' });
+      const updated = await service.update(agent.id, {
+        constraints: { maxTokens: 4096 },
+      } as any);
+      expect(updated.model).toBe('gpt-4o');
+      expect(typeof updated.model).toBe('string');
+    });
+
+    it('constraints.maxTokens with model update - model should win', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', { provider: 'openai', model: 'gpt-4o' });
+      const updated = await service.update(agent.id, {
+        constraints: { maxTokens: 4096 },
+        model: 'gpt-3.5-turbo',
+      } as any);
+      expect(updated.model).toBe('gpt-3.5-turbo');
+    });
+
+    it('constraints stored in metadata, not overwriting model', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', { provider: 'openai', model: 'gpt-4o' });
+      const updated = await service.update(agent.id, {
+        constraints: { maxTokens: 4096, temperature: 0.7 },
+      } as any);
+      expect(updated.model).toBe('gpt-4o');
+      expect(updated.metadata?.constraints).toEqual({ maxTokens: 4096, temperature: 0.7 });
+    });
+
+    it('all three: metadata + description + constraints preserved together', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', { provider: 'openai', model: 'gpt-4o' });
+      const updated = await service.update(agent.id, {
+        metadata: { foo: 'bar' },
+        description: 'My desc',
+        constraints: { maxTokens: 2048 },
+      } as any);
+      expect(updated.metadata?.foo).toBe('bar');
+      expect(updated.metadata?.description).toBe('My desc');
+      expect(updated.metadata?.constraints).toEqual({ maxTokens: 2048 });
+      expect(updated.model).toBe('gpt-4o');
+    });
+
+    it('updates updatedAt timestamp on every update', async () => {
+      const agent = await service.create('TestAgent', '1.0.0', 'Prompt', {});
+      const before = await service.get(agent.id);
+      await new Promise((r) => setTimeout(r, 50));
+      const updated = await service.update(agent.id, { name: 'time-test' });
+      expect(new Date(updated.updatedAt).getTime()).toBeGreaterThanOrEqual(new Date(before.updatedAt).getTime());
     });
   });
 

@@ -1,5 +1,5 @@
 import { drizzle } from 'drizzle-orm/bun-sqlite';
-import { Database } from 'bun:sqlite';
+import { Database } from './sqlite.js';
 import * as schema from './schema.js';
 import { getLogger } from '../util/logger.js';
 import { existsSync, mkdirSync } from 'fs';

@@ -84,25 +84,24 @@ describe('ToolExecutor', () => {
       expect(result.toolCallId).toBe('call_123');
     });
 
-    it('executes built-in bash tool', async () => {
-      // Just verify bash tool is registered and can be called
+    it('lists built-in bash tool', () => {
       const tools = executor.listTools();
-      expect(tools.some((t) => t.name === 'bash')).toBe(true);
+      expect(tools.some((t) => t.function.name === 'bash')).toBe(true);
     });
 
-    it('executes built-in readFile tool', async () => {
+    it('lists built-in readFile tool', () => {
       const tools = executor.listTools();
-      expect(tools.some((t) => t.name === 'readFile')).toBe(true);
+      expect(tools.some((t) => t.function.name === 'readFile')).toBe(true);
     });
 
-    it('executes built-in writeFile tool', async () => {
+    it('lists built-in writeFile tool', () => {
       const tools = executor.listTools();
-      expect(tools.some((t) => t.name === 'writeFile')).toBe(true);
+      expect(tools.some((t) => t.function.name === 'writeFile')).toBe(true);
     });
 
-    it('executes built-in fetchPage tool', async () => {
+    it('lists built-in fetchPage tool', () => {
       const tools = executor.listTools();
-      expect(tools.some((t) => t.name === 'fetchPage')).toBe(true);
+      expect(tools.some((t) => t.function.name === 'fetchPage')).toBe(true);
     });
   });
 
@@ -145,9 +144,10 @@ describe('ToolExecutor', () => {
       const schema = executor.getToolSchema('mockTool');
 
       expect(schema).toBeDefined();
-      expect(schema?.name).toBe('mockTool');
-      expect(schema?.description).toBe('Mock tool for testing');
-      expect(schema?.parameters).toBeDefined();
+      expect(schema?.type).toBe('function');
+      expect(schema?.function.name).toBe('mockTool');
+      expect(schema?.function.description).toBe('Mock tool for testing');
+      expect(schema?.function.parameters).toBeDefined();
     });
 
     it('returns null for non-existent tool', () => {
@@ -156,17 +156,14 @@ describe('ToolExecutor', () => {
       expect(schema).toBeNull();
     });
 
-    it('includes parameter info', () => {
+    it('includes parameter info in JSON Schema format', () => {
       registry.register(new MockTool());
 
       const schema = executor.getToolSchema('mockTool');
+      const props = schema?.function.parameters?.properties;
 
-      expect(schema?.parameters).toContainEqual(
-        expect.objectContaining({
-          name: 'value',
-          type: 'string',
-        })
-      );
+      expect(props).toHaveProperty('value');
+      expect(props?.value?.type).toBe('string');
     });
   });
 
@@ -174,13 +171,13 @@ describe('ToolExecutor', () => {
     it('returns all available tools', () => {
       const tools = executor.listTools();
 
-      expect(tools.length).toBeGreaterThanOrEqual(4);
+      expect(tools.length).toBe(12);
     });
 
     it('includes default tools', () => {
       const tools = executor.listTools();
 
-      const names = tools.map((t) => t.name);
+      const names = tools.map((t) => t.function.name);
       expect(names).toContain('bash');
       expect(names).toContain('readFile');
       expect(names).toContain('writeFile');
@@ -192,16 +189,17 @@ describe('ToolExecutor', () => {
 
       const tools = executor.listTools();
 
-      expect(tools.some((t) => t.name === 'mockTool')).toBe(true);
+      expect(tools.some((t) => t.function.name === 'mockTool')).toBe(true);
     });
 
-    it('returns tool definitions with schemas', () => {
+    it('returns tool definitions with correct shape', () => {
       const tools = executor.listTools();
 
       tools.forEach((tool) => {
-        expect(tool.name).toBeDefined();
-        expect(tool.description).toBeDefined();
-        expect(tool.parameters).toBeDefined();
+        expect(tool.type).toBe('function');
+        expect(tool.function.name).toBeDefined();
+        expect(tool.function.description).toBeDefined();
+        expect(tool.function.parameters).toBeDefined();
       });
     });
   });
