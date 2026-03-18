@@ -16,18 +16,25 @@ async function main() {
     databasePath: process.env.DATABASE_PATH
   });
 
-  try {
-    const artifacts = await client.artifacts.list();
-    if (namesOnly) {
-      console.log(`Listing ${artifacts.length} Artifact Names...\n`);
-      artifacts.forEach((artifact) => {
-        console.log(artifact);
+  const filename = process.argv[2];
 
-        
-      });
-    } else  
-    console.log(JSON.stringify(artifacts, null, 2));
-   
+  try {
+    if (filename) {
+      const artifact = await client.artifacts.get(filename);
+      if (artifact) {
+        console.log(artifact.toString());
+      } else {
+        console.error(`Artifact '${filename}' not found.`);
+      }
+    } else {
+      const artifacts = await client.artifacts.list();
+      if (namesOnly) {
+        console.log(`Listing ${artifacts.length} Artifact Names...\n`);
+        artifacts.forEach((artifact) => console.log(artifact));
+      } else {
+        console.log(JSON.stringify(artifacts, null, 2));
+      }
+    }
   } catch (error) {
     console.error('Error listing tools:', error);
   } finally {
