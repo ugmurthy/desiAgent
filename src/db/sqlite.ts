@@ -45,6 +45,10 @@ class NodeCompatDatabase {
     this.db = new DatabaseSync(path);
   }
 
+  close(): void {
+    this.db.close();
+  }
+
   exec(sql: string): void {
     this.db.exec(sql);
   }
