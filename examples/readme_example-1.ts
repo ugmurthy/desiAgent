@@ -1,4 +1,4 @@
-import { setupDesiAgent } from '@ugm/desiagent';
+import { setupDesiAgent, formatEvent } from '@ugm/desiagent';
 
 const client = await setupDesiAgent({
   llmProvider: 'openrouter',
@@ -21,7 +21,7 @@ if (result.status === 'clarification_required') {
 
   // Stream events until completion
   for await (const event of client.executions.streamEvents(result.executionId)) {
-    console.log(event.type, event.data);
+    console.log(formatEvent(event));
   }
 
   // Retrieve final result

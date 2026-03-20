@@ -506,6 +506,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             type: task.action_type,
             tool: task.tool_or_prompt.name,
             description: task.description,
+            thought: task.thought,
           },
         });
 
@@ -517,6 +518,14 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           executionId: execId,
           subStepId: task.id,
           artifactsDir: this.artifactsDir,
+          onEvent: (event: string, data?: any) => {
+            this.emitEventIfEnabled(execConfig, {
+              type: ExecutionEventType.TaskProgress,
+              executionId: execId,
+              ts: Date.now(),
+              data: { taskId: task.id, message: `[${event}] ${JSON.stringify(data)}` },
+            });
+          },
           emitEvent: {
             progress: (message: string) => {
               this.emitEventIfEnabled(execConfig, {

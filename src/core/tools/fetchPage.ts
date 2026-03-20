@@ -53,6 +53,10 @@ export class FetchPageTool extends BaseTool<any, FetchPageOutput> {
   ): Promise<FetchPageOutput> {
     this.logger.info(`Fetching page: ${input.url}`);
 
+    if (ctx.onEvent) {
+      ctx.onEvent('tool:fetchPage:started', { url: input.url });
+    }
+
     try {
       // Fetch with timeout using AbortController
       const controller = new AbortController();

@@ -4,7 +4,7 @@
  * Usage: bun run examples/execute-bg-dag-id.ts <dagId>
  */
 
-import { setupDesiAgent } from '../src/index.js';
+import { setupDesiAgent, formatEvent } from '../src/index.js';
 
 async function main(dagId: string) {
   const client = await setupDesiAgent({
@@ -28,7 +28,7 @@ async function main(dagId: string) {
     
     // Wait for execution to complete
     for await (const event of client.executions.streamEvents(execution.id)) {
-      console.log('Event:', event.type, event.data);
+      console.log(formatEvent(event));
     }
 
     // Get execution details with substeps

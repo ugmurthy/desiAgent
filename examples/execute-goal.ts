@@ -6,7 +6,7 @@
  *   echo "my goal" | bun run examples/execute-goal.ts
  */
 
-import { setupDesiAgent } from '../src/index.js';
+import { setupDesiAgent, formatEvent } from '../src/index.js';
 import { parseArgs } from 'util';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
@@ -129,7 +129,7 @@ async function main() {
     
     // Wait for execution to complete
     for await (const event of client.executions.streamEvents(execution.id)) {
-      console.log('Event:', event.type, event.data);
+      console.log(formatEvent(event));
       if (event.type === 'execution_completed') {
 
 

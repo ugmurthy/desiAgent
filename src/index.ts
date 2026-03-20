@@ -57,8 +57,8 @@ class DesiAgentClientImpl implements DesiAgentClient {
   private isMemoryDb: boolean;
   private statsQueue?: StatsQueue;
   private dagScheduler?: NodeCronDagScheduler;
-  //private _llmProvider!: LLMProviderInterface;
-  private _resolved!: ResolvedConfig;
+  /** @internal */ _resolved!: ResolvedConfig;
+  /** @internal */ _llmProvider!: LLMProviderInterface;
 
   constructor(
     agents: AgentsService,
@@ -441,6 +441,7 @@ export {
 
 // Utility exports
 export { validateCronExpression } from './util/cron-validator.js';
+export { formatEvent } from './util/formatEvent.js';
 export {
   extractCodeBlock,
   extractJsonCodeBlock,
