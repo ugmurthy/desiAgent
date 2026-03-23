@@ -21,6 +21,7 @@ import {
   truncateForLog,
 } from '../../util/dag-utils.js';
 import { DecomposerJobSchema, type DecomposerJob } from '../../types/dag.js';
+import type { ResolvedConfig } from '../../types/config.js';
 import type { LLMProvider } from '../providers/types.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import { createLLMProvider } from '../providers/factory.js';
@@ -61,6 +62,8 @@ export interface DAGsServiceDeps {
   agentsService: AgentsService;
   scheduler?: DagScheduler;
   artifactsDir: string;
+  smtp?: ResolvedConfig['smtp'];
+  imap?: ResolvedConfig['imap'];
   staleExecutionMinutes?: number;
   apiKey?: string;
   ollamaBaseUrl?: string;
@@ -163,6 +166,8 @@ export class DAGsService {
   private agentsService: AgentsService;
   private scheduler?: DagScheduler;
   private artifactsDir: string;
+  private smtp?: ResolvedConfig['smtp'];
+  private imap?: ResolvedConfig['imap'];
   private staleExecutionMinutes: number;
   private apiKey?: string;
   private ollamaBaseUrl?: string;
@@ -178,6 +183,8 @@ export class DAGsService {
     this.agentsService = deps.agentsService;
     this.scheduler = deps.scheduler;
     this.artifactsDir = deps.artifactsDir;
+    this.smtp = deps.smtp;
+    this.imap = deps.imap;
     this.staleExecutionMinutes = deps.staleExecutionMinutes ?? 5;
     this.apiKey = deps.apiKey;
     this.ollamaBaseUrl = deps.ollamaBaseUrl;
@@ -925,6 +932,8 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       llmProvider: this.llmProvider,
       toolRegistry: this.toolRegistry,
       artifactsDir: this.artifactsDir,
+      smtp: this.smtp,
+      imap: this.imap,
       apiKey: this.apiKey,
       ollamaBaseUrl: this.ollamaBaseUrl,
       skipGenerationStats: this.skipGenerationStats,
@@ -1011,6 +1020,8 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       llmProvider: this.llmProvider,
       toolRegistry: this.toolRegistry,
       artifactsDir: this.artifactsDir,
+      smtp: this.smtp,
+      imap: this.imap,
       apiKey: this.apiKey,
       ollamaBaseUrl: this.ollamaBaseUrl,
       skipGenerationStats: this.skipGenerationStats,

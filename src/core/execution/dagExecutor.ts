@@ -17,6 +17,7 @@ import { ExecutionsService } from './executions.js';
 import { ExecutionEventType } from '../../types/execution.js';
 import { getLogger } from '../../util/logger.js';
 import type { SkillRegistry } from '../skills/registry.js';
+import type { ResolvedConfig } from '../../types/config.js';
 import type { StatsQueue } from '../workers/statsQueue.js';
 
 
@@ -61,6 +62,8 @@ export interface DAGExecutorConfig {
   llmProvider: LLMProvider;
   toolRegistry: ToolRegistry;
   artifactsDir: string;
+  smtp?: ResolvedConfig['smtp'];
+  imap?: ResolvedConfig['imap'];
   apiKey?: string;
   ollamaBaseUrl?: string;
   skipGenerationStats?: boolean;
@@ -124,6 +127,8 @@ export class DAGExecutor {
   private llmProvider: LLMProvider;
   private toolRegistry: ToolRegistry;
   private artifactsDir: string;
+  private smtp?: ResolvedConfig['smtp'];
+  private imap?: ResolvedConfig['imap'];
   private apiKey?: string;
   private ollamaBaseUrl?: string;
   private skipGenerationStats?: boolean;
@@ -135,6 +140,8 @@ export class DAGExecutor {
     this.llmProvider = config.llmProvider;
     this.toolRegistry = config.toolRegistry;
     this.artifactsDir = config.artifactsDir;
+    this.smtp = config.smtp;
+    this.imap = config.imap;
     this.apiKey = config.apiKey;
     this.ollamaBaseUrl = config.ollamaBaseUrl;
     this.skipGenerationStats = config.skipGenerationStats;
@@ -518,6 +525,8 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           executionId: execId,
           subStepId: task.id,
           artifactsDir: this.artifactsDir,
+          smtp: this.smtp,
+          imap: this.imap,
           onEvent: (event: string, data?: any) => {
             this.emitEventIfEnabled(execConfig, {
               type: ExecutionEventType.TaskProgress,

@@ -44,6 +44,16 @@ if (!skill) {
   process.exit(1);
 }
 
+// No params → show skill details
+if (!rawParams) {
+  console.log(`Skill: ${skill.name}`);
+  console.log(`  type:        ${skill.type}`);
+  console.log(`  description: ${skill.description}`);
+  console.log(`  source:      ${skill.source}`);
+  console.log(`  path:        ${skill.filePath}`);
+  process.exit(0);
+}
+
 if (skill.type !== 'executable') {
   console.error(`Skill "${skillName}" is type "${skill.type}" (not executable).`);
   console.error('Context skills are injected into LLM prompts — they cannot be run directly.');
@@ -64,7 +74,7 @@ try {
   process.exit(1);
 }
 
-const params = rawParams ? JSON.parse(rawParams) : {};
+const params = JSON.parse(rawParams);
 console.log(`Running skill "${skillName}" with params:`, params, '\n');
 
 const result = await handler(params);

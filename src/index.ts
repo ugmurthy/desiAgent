@@ -280,6 +280,8 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       agentsService,
       scheduler: dagScheduler,
       artifactsDir: resolved.artifactsDir,
+      smtp: resolved.smtp,
+      imap: resolved.imap,
       staleExecutionMinutes: resolved.staleExecutionMinutes,
       apiKey: resolved.apiKey,
       ollamaBaseUrl: resolved.ollamaBaseUrl,
