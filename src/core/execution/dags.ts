@@ -9,7 +9,7 @@ import { eq, desc, isNotNull, sql, gte, lte, and } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import cronstrue from 'cronstrue';
 import type { DrizzleDB } from '../../db/client.js';
-import { dags, dagExecutions, dagSubSteps } from '../../db/schema.js';
+import { dags, dagExecutions, dagSubSteps, policyArtifacts } from '../../db/schema.js';
 import type { DAG, DAGFilter } from '../../types/index.js';
 import { NotFoundError, ValidationError } from '../../errors/index.js';
 import { getLogger } from '../../util/logger.js';
@@ -27,10 +27,14 @@ import type { ToolRegistry } from '../tools/registry.js';
 import { createLLMProvider } from '../providers/factory.js';
 import { LlmExecuteTool } from '../tools/llmExecute.js';
 import type { AgentsService } from './agents.js';
-import { DAGExecutor, type ExecutionConfig } from './dagExecutor.js';
+import { DAGExecutor, type ExecutionConfig, type SubTask as ExecutorSubTask } from './dagExecutor.js';
 import type { SkillRegistry } from '../skills/registry.js';
 import { MinimalSkillDetector } from '../skills/detector.js';
 import type { StatsQueue } from '../workers/statsQueue.js';
+import { buildGlobalContext as buildGlobalContextShared, buildInferencePrompt as buildInferencePromptShared } from './contextBuilder.js';
+import { deriveExecutionStatus as deriveExecutionStatusShared, aggregateUsage as aggregateUsageShared, aggregateCost as aggregateCostShared } from './executionAggregates.js';
+import { LenientPolicyEngine } from '../policy/engine.js';
+import type { PolicyDecision, PolicyEngine } from '../policy/types.js';
 
 export function generateDAGId(): string {
   return `dag_${nanoid(21)}`;
@@ -70,6 +74,7 @@ export interface DAGsServiceDeps {
   skipGenerationStats?: boolean;
   skillRegistry?: SkillRegistry;
   statsQueue?: StatsQueue;
+  policyEngine?: PolicyEngine;
 }
 
 export interface CreateDAGFromGoalOptions {
@@ -174,6 +179,7 @@ export class DAGsService {
   private skipGenerationStats?: boolean;
   private skillRegistry?: SkillRegistry;
   private statsQueue?: StatsQueue;
+  private policyEngine: PolicyEngine;
   private logger = getLogger();
 
   constructor(deps: DAGsServiceDeps) {
@@ -191,6 +197,31 @@ export class DAGsService {
     this.skipGenerationStats = deps.skipGenerationStats;
     this.skillRegistry = deps.skillRegistry;
     this.statsQueue = deps.statsQueue;
+    this.policyEngine = deps.policyEngine ?? new LenientPolicyEngine(this.toolRegistry, 5);
+  }
+
+  private async persistPolicyArtifact(
+    dagId: string,
+    executionId: string | null,
+    decision: PolicyDecision,
+  ): Promise<void> {
+    try {
+      await this.db.insert(policyArtifacts).values({
+        id: `policy_${nanoid(21)}`,
+        dagId,
+        executionId,
+        outcome: decision.outcome,
+        mode: decision.mode,
+        policyVersion: decision.policyVersion,
+        directives: decision.directives,
+        violations: decision.violations,
+        rationale: decision.rationale,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    } catch (error) {
+      this.logger.warn({ err: error, dagId, executionId }, 'Failed to persist policy artifact');
+    }
   }
 
   private registerScheduleIfActive(dagId: string, cronSchedule: string | null | undefined, scheduleActive: boolean, timezone: string): void {
@@ -208,19 +239,7 @@ export class DAGsService {
   }
 
   private buildGlobalContext(job: DecomposerJob): { formatted: string; totalTasks: number } {
-    const entitiesStr = job.entities.length > 0
-      ? job.entities.map((e) => `• ${e.entity} (${e.type}): ${e.grounded_value}`).join('\n')
-      : 'None';
-
-    const formatted = `# Global Context
-**Request:** ${job.original_request}
-**Primary Intent:** ${job.intent.primary}
-**Sub-intents:** ${job.intent.sub_intents.join('; ') || 'None'}
-**Entities:**
-${entitiesStr}
-**Synthesis Goal:** ${job.synthesis_plan}`;
-
-    return { formatted, totalTasks: job.sub_tasks.length };
+    return buildGlobalContextShared(job);
   }
 
   private buildInferencePrompt(
@@ -228,33 +247,7 @@ ${entitiesStr}
     globalContext: { formatted: string; totalTasks: number },
     taskResults: Map<string, any>
   ): string {
-    const maxDepLength = 2000;
-
-    const depsStr = task.dependencies
-      .filter((id) => id !== 'none' && taskResults.has(id))
-      .map((id) => {
-        const result = taskResults.get(id);
-        const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
-        return `[Task ${id}]: ${resultStr.length > maxDepLength ? resultStr.slice(0, maxDepLength) + '...' : resultStr}`;
-      })
-      .join('\n\n') || 'None';
-
-    return `You are an expert assistant executing a sub-task within a larger workflow.
-
-${globalContext.formatted}
-
-# Current Task [${task.id}/${globalContext.totalTasks}]
-**Description:** ${task.description}
-**Reasoning:** ${task.thought}
-**Expected Output:** ${task.expected_output}
-
-# Dependencies
-${depsStr}
-
-# Instruction
-${task.tool_or_prompt.params?.prompt || task.description}
-
-Respond with ONLY the expected output format. Build upon dependencies for coherence and align with the global context.`;
+    return buildInferencePromptShared(task as ExecutorSubTask, globalContext, taskResults);
   }
 
   private deriveExecutionStatus(subSteps: Array<{ status: string }>): {
@@ -263,61 +256,17 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     failedTasks: number;
     waitingTasks: number;
   } {
-    const completed = subSteps.filter((s) => s.status === 'completed').length;
-    const failed = subSteps.filter((s) => s.status === 'failed').length;
-    const running = subSteps.filter((s) => s.status === 'running').length;
-    const waiting = subSteps.filter((s) => s.status === 'waiting').length;
-    const total = subSteps.filter((s) => s.status !== 'deleted').length;
-
-    let status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'partial';
-
-    if (waiting > 0) {
-      status = 'waiting';
-    } else if (failed > 0 && completed + failed === total) {
-      status = failed === total ? 'failed' : 'partial';
-    } else if (completed === total) {
-      status = 'completed';
-    } else if (running > 0 || completed > 0) {
-      status = 'running';
-    } else {
-      status = 'pending';
-    }
-
-    return { status, completedTasks: completed, failedTasks: failed, waitingTasks: waiting };
+    return deriveExecutionStatusShared(subSteps);
   }
 
   private aggregateUsage(subSteps: Array<{ usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | null }>):
     | { promptTokens: number; completionTokens: number; totalTokens: number }
     | null {
-    let hasUsage = false;
-    let promptTokens = 0;
-    let completionTokens = 0;
-    let totalTokens = 0;
-
-    for (const step of subSteps) {
-      if (step.usage) {
-        hasUsage = true;
-        promptTokens += step.usage.promptTokens ?? 0;
-        completionTokens += step.usage.completionTokens ?? 0;
-        totalTokens += step.usage.totalTokens ?? 0;
-      }
-    }
-
-    return hasUsage ? { promptTokens, completionTokens, totalTokens } : null;
+    return aggregateUsageShared(subSteps);
   }
 
   private aggregateCost(subSteps: Array<{ costUsd?: string | null }>): number | null {
-    let totalCost = 0;
-    let hasCost = false;
-
-    for (const step of subSteps) {
-      if (step.costUsd) {
-        hasCost = true;
-        totalCost += parseFloat(step.costUsd);
-      }
-    }
-
-    return hasCost ? totalCost : null;
+    return aggregateCostShared(subSteps);
   }
 
   async createFromGoal(options: CreateDAGFromGoalOptions): Promise<DAGPlanningResult> {
@@ -884,6 +833,18 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     }
 
     const executionId = generateDAGExecutionId();
+    const policyDecision = this.policyEngine.evaluate(job, {
+      dagId,
+      executionId,
+      requestedMaxParallelism: _options?.executionConfig?.maxParallelism,
+    });
+
+    if (policyDecision.outcome === 'deny') {
+      await this.persistPolicyArtifact(dagId, executionId, policyDecision);
+      const reason = policyDecision.violations.map((violation) => violation.message).join('; ') || policyDecision.rationale;
+      throw new ValidationError(`Execution denied by policy: ${reason}`, 'policy', policyDecision);
+    }
+
     const originalGoalText = (dagRecord.params as any)?.goalText || job.original_request;
     const now = new Date();
 
@@ -926,6 +887,8 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       totalTasks: job.sub_tasks.length,
     }, 'DAG execution records created');
 
+    await this.persistPolicyArtifact(dagId, executionId, policyDecision);
+
     // Execute the DAG asynchronously (fire and forget)
     const dagExecutor = new DAGExecutor({
       db: this.db,
@@ -942,7 +905,14 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     });
 
     // Start execution in background - don't await
-    dagExecutor.execute(job, executionId, dagId, originalGoalText, _options?.executionConfig).catch((error) => {
+    const effectiveExecutionConfig = _options?.executionConfig
+      ? {
+          ..._options.executionConfig,
+          maxParallelism: policyDecision.directives.maxParallelism,
+        }
+      : undefined;
+
+    dagExecutor.execute(job, executionId, dagId, originalGoalText, effectiveExecutionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG execution failed');
     });
 
@@ -991,6 +961,20 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       throw new NotFoundError('DAG', execution.dagId);
     }
 
+    // Parse job and run policy preflight before mutating execution status.
+    const job = DecomposerJobSchema.parse(dagRecord.result) as DecomposerJob;
+    const policyDecision = this.policyEngine.evaluate(job, {
+      dagId: execution.dagId,
+      executionId,
+      requestedMaxParallelism: executionConfig?.maxParallelism,
+    });
+
+    if (policyDecision.outcome === 'deny') {
+      await this.persistPolicyArtifact(execution.dagId, executionId, policyDecision);
+      const reason = policyDecision.violations.map((violation) => violation.message).join('; ') || policyDecision.rationale;
+      throw new ValidationError(`Execution resume denied by policy: ${reason}`, 'policy', policyDecision);
+    }
+
     const newRetryCount = (execution.retryCount || 0) + 1;
     const now = new Date();
 
@@ -1011,9 +995,9 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       previousStatus: execution.status,
     }, 'Resuming DAG execution');
 
-    // Parse job and execute
-    const job = DecomposerJobSchema.parse(dagRecord.result) as DecomposerJob;
     const originalGoalText = (dagRecord.params as any)?.goalText || job.original_request;
+
+    await this.persistPolicyArtifact(execution.dagId, executionId, policyDecision);
 
     const dagExecutor = new DAGExecutor({
       db: this.db,
@@ -1030,7 +1014,14 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     });
 
     // Start execution in background - don't await
-    dagExecutor.execute(job, executionId, execution.dagId, originalGoalText, executionConfig).catch((error) => {
+    const effectiveExecutionConfig = executionConfig
+      ? {
+          ...executionConfig,
+          maxParallelism: policyDecision.directives.maxParallelism,
+        }
+      : undefined;
+
+    dagExecutor.execute(job, executionId, execution.dagId, originalGoalText, effectiveExecutionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG resume execution failed');
     });
 

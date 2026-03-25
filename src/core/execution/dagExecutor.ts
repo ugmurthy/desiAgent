@@ -19,6 +19,9 @@ import { getLogger } from '../../util/logger.js';
 import type { SkillRegistry } from '../skills/registry.js';
 import type { ResolvedConfig } from '../../types/config.js';
 import type { StatsQueue } from '../workers/statsQueue.js';
+import { buildGlobalContext as buildGlobalContextShared, buildInferencePrompt as buildInferencePromptShared } from './contextBuilder.js';
+import { deriveExecutionStatus as deriveExecutionStatusShared, aggregateUsage as aggregateUsageShared, aggregateCost as aggregateCostShared } from './executionAggregates.js';
+import { ExecutionPlanCompiler } from './planCompiler.js';
 
 
 export interface SubTask {
@@ -89,6 +92,11 @@ export interface ExecutionConfig {
    * Optional abort signal to cancel in-flight tool/LLM calls.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Maximum number of tasks to execute concurrently.
+   * Default: 5
+   */
+  maxParallelism?: number;
 }
 
 /**
@@ -120,6 +128,14 @@ export interface TaskExecutionResult {
 
 function generateSubStepId(): string {
   return `substep_${nanoid(21)}`;
+}
+
+function chunkTasks<T>(tasks: T[], chunkSize: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < tasks.length; i += chunkSize) {
+    chunks.push(tasks.slice(i, i + chunkSize));
+  }
+  return chunks;
 }
 
 export class DAGExecutor {
@@ -165,19 +181,7 @@ export class DAGExecutor {
   }
 
   private buildGlobalContext(job: DecomposerJob): GlobalContext {
-    const entitiesStr = job.entities.length > 0
-      ? job.entities.map(e => `• ${e.entity} (${e.type}): ${e.grounded_value}`).join('\n')
-      : 'None';
-
-    const formatted = `# Global Context
-**Request:** ${job.original_request}
-**Primary Intent:** ${job.intent.primary}
-**Sub-intents:** ${job.intent.sub_intents.join('; ') || 'None'}
-**Entities:**
-${entitiesStr}
-**Synthesis Goal:** ${job.synthesis_plan}`;
-
-    return { formatted, totalTasks: job.sub_tasks.length };
+    return buildGlobalContextShared(job);
   }
 
   private buildInferencePrompt(
@@ -185,33 +189,20 @@ ${entitiesStr}
     globalContext: GlobalContext,
     taskResults: Map<string, any>
   ): string {
-    const MAX_DEP_LENGTH = 2000;
+    return buildInferencePromptShared(task, globalContext, taskResults);
+  }
 
-    const depsStr = task.dependencies
-      .filter(id => id !== 'none' && taskResults.has(id))
-      .map(id => {
-        const result = taskResults.get(id);
-        const str = typeof result === 'string' ? result : JSON.stringify(result);
-        return `[Task ${id}]: ${str.length > MAX_DEP_LENGTH ? str.slice(0, MAX_DEP_LENGTH) + '...' : str}`;
-      })
-      .join('\n\n') || 'None';
+  private resolveInferenceAgentName(task: SubTask): string {
+    const explicitAgentName = task.tool_or_prompt.params?.agentName;
+    if (typeof explicitAgentName === 'string' && explicitAgentName.trim().length > 0) {
+      return explicitAgentName.trim();
+    }
 
-    return `You are an expert assistant executing a sub-task within a larger workflow.
+    if (task.tool_or_prompt.name && task.tool_or_prompt.name !== 'inference') {
+      return task.tool_or_prompt.name;
+    }
 
-${globalContext.formatted}
-
-# Current Task [${task.id}/${globalContext.totalTasks}]
-**Description:** ${task.description}
-**Reasoning:** ${task.thought}
-**Expected Output:** ${task.expected_output}
-
-# Dependencies
-${depsStr}
-
-# Instruction
-${task.tool_or_prompt.params?.prompt || task.description}
-
-Respond with ONLY the expected output format. Build upon dependencies for coherence and align with the global context.`;
+    return 'inference';
   }
 
   private resolveDependencies(
@@ -251,6 +242,10 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       }
     } else if (tool === 'sendEmail' && key === 'body') {
       resolvedParams[key] = this.resolveEmailContent(task, taskResults);
+    } else if (tool === 'sendEmail' && (key === 'to' || key === 'subject' || key === 'cc' || key === 'bcc')) {
+      // When a sendEmail param references a dependency whose result is a JSON string
+      // containing email fields (to, subject, body, etc.), extract the specific field.
+      resolvedParams[key] = this.resolveSendEmailField(key, value, matches, task, taskResults, resolvedParams);
     }
     
     else {
@@ -268,18 +263,43 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
 
       let depResult = taskResults.get(deps);
 
-      this.logger.info(`╰─dependency reference in: task ${deps} - EmailContent`);
-      this.logger.info(`  ╰─type of depResulr - ${typeof depResult}}`);
+      this.logger.info(`╰─resolveEmailContent for task ${task.id} dependent on task:${deps} `);
+      this.logger.info(`  ╰─type of depResult - ${typeof depResult}}`);
       
       if (typeof depResult === 'string') {
         const lines = depResult.split('\n');
         
+        // strip html bodies of back ticks
         if (lines.length > 1) {
           this.logger.info(`  ╰─ is String line 2:${lines[1]} `);
           if (lines[0].includes('```html')){
             depResult = lines.slice(1, -1).join('\n');
           }
         }
+        // check if the string is a JSON object 
+        try {
+          const candidate = JSON.parse(depResult);
+          if (typeof candidate === 'object' && candidate !== null) {
+            
+            if (candidate.body) {
+              depResult = candidate.body;
+              this.logger.info(`  ╰─ is JSON object - found 'body' `);
+            }
+            // strin html bodies of back ticks
+            const lines = depResult.split('\n');
+            if (lines.length > 1) {
+                this.logger.info(`  ╰─ body- line 2:${lines[1]} `);
+                if (lines[0].includes('```html')){
+                  depResult = lines.slice(1, -1).join('\n');
+            }
+        }
+            
+          }
+        } catch {
+          // not JSON, ignore
+        }
+       
+
         contentArray.push(depResult);
       } else if (typeof depResult === 'object' && depResult?.content) {
         contentArray.push(depResult.content);
@@ -287,6 +307,53 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     }
 
     return contentArray.join('\n');
+  }
+
+  private resolveSendEmailField(
+    key: string,
+    value: any,
+    matches: RegExpMatchArray[],
+    task: Record<string, any>,
+    taskResults: Map<string, any>,
+    resolvedParams: Record<string, any>
+  ): any {
+    // If there are no dependency references, keep original value
+    
+
+    // Try to extract the field from a dependency result that is a JSON object
+    for (const depId of task.dependencies) {
+      const depResult = taskResults.get(depId);
+      if (depResult == null) continue;
+
+      let parsed: Record<string, any> | null = null;
+      if (typeof depResult === 'object' && depResult !== null) {
+        parsed = depResult;
+      } else if (typeof depResult === 'string') {
+        try {
+          const candidate = JSON.parse(depResult);
+          if (typeof candidate === 'object' && candidate !== null) {
+            parsed = candidate;
+          }
+        } catch {
+          // not JSON, ignore
+        }
+      }
+
+      if (parsed && key in parsed) {
+        this.logger.info(`╰─resolveSendEmailField: extracted '${key}' from dependency Task ${depId}`);
+        //this.logger.info(`╰─sendEmail: extracted '${key}' from dependency Task ${depId}`);
+        // Also backfill body/subject if present and not yet resolved
+        for (const autoKey of ['to', 'subject', 'body', 'cc', 'bcc'] as const) {
+          if (autoKey in parsed && !(autoKey in resolvedParams && resolvedParams[autoKey] !== value)) {
+            resolvedParams[autoKey] = parsed[autoKey];
+          }
+        }
+        return parsed[key];
+      }
+    }
+
+    // Fallback to normal string replacement
+    return this.resolveStringReplacements(value, matches, key, taskResults);
   }
 
   private resolveWriteFileContent(
@@ -371,7 +438,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     
     for (const task of job.sub_tasks) {
       if (task.action_type === 'inference' || task.tool_or_prompt.name === 'inference') {
-        agentNames.add(task.tool_or_prompt.name);
+        agentNames.add(this.resolveInferenceAgentName(task));
       }
     }
 
@@ -425,6 +492,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       skipEvents: config.skipEvents ?? false,
       batchDbUpdates: config.batchDbUpdates ?? true,
       abortSignal: config.abortSignal,
+      maxParallelism: Math.max(1, Math.min(config.maxParallelism ?? 5, 5)),
     };
 
     if (job.clarification_needed) {
@@ -464,13 +532,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       const taskResults = new Map<string, any>();
       const executedTasks = new Set<string>();
       const globalContext = this.buildGlobalContext(job);
-
-      const canExecute = (task: SubTask): boolean => {
-        if (task.dependencies.length === 0 || task.dependencies.includes('none')) {
-          return true;
-        }
-        return task.dependencies.every(dep => executedTasks.has(dep));
-      };
+      const compiledPlan = ExecutionPlanCompiler.compile(job.sub_tasks);
 
       // Track task execution results for batch updates
       interface TaskWaveResult {
@@ -569,7 +631,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
         } else if (task.action_type === 'inference' || task.tool_or_prompt.name === 'inference') {
           const fullPrompt = this.buildInferencePrompt(task, globalContext, taskResults);
 
-          const agentName = task.tool_or_prompt.name;
+          const agentName = this.resolveInferenceAgentName(task);
           
           // Use pre-fetched agent from cache instead of DB query
           const agent = agentCache.get(agentName);
@@ -670,22 +732,16 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
       // Execute tasks in dependency order with wave-based batching
       let waveNumber = 0;
 
-      while (executedTasks.size < job.sub_tasks.length) {
+      for (const readyTasksInWave of compiledPlan.waves) {
         waveNumber++;
-        const readyTasks = job.sub_tasks.filter(
-          task => !executedTasks.has(task.id) && canExecute(task)
-        );
+        const readyTasks = readyTasksInWave.filter((task) => !executedTasks.has(task.id));
 
         if (readyTasks.length === 0) {
-          const remaining = job.sub_tasks.filter(task => !executedTasks.has(task.id));
-          throw new Error(
-            `DAG execution deadlock. Remaining tasks: ${remaining.map(t => t.id).join(', ')}`
-          );
+          continue;
         }
 
-        // Collect wave results for batch DB update
-        const waveResults: TaskWaveResult[] = [];
         const waveStartTime = Date.now();
+        const taskBatches = chunkTasks(readyTasks, execConfig.maxParallelism ?? 5);
 
         this.emitEventIfEnabled(execConfig, {
           type: ExecutionEventType.WaveStarted,
@@ -693,152 +749,152 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
           ts: Date.now(),
           data: {
             wave: waveNumber,
-            taskIds: readyTasks.map(t => t.id),
-            parallel: readyTasks.length,
+            taskIds: readyTasks.map((task) => task.id),
+            parallel: Math.min(readyTasks.length, execConfig.maxParallelism ?? 5),
           },
         });
 
-        // Batch update all tasks in wave to 'running' status if batching enabled
-        if (execConfig.batchDbUpdates && readyTasks.length > 0) {
-          const updatePromises = readyTasks.map(task =>
-            this.db.update(dagSubSteps)
-              .set({ status: 'running', startedAt: new Date() })
-              .where(and(
-                eq(dagSubSteps.taskId, task.id),
-                eq(dagSubSteps.executionId, execId)
-              ))
-          );
-          await Promise.all(updatePromises);
-          this.logger.debug({ waveSize: readyTasks.length }, 'Batch updated wave tasks to running');
-        }
+        for (const taskBatch of taskBatches) {
+          const batchResults: TaskWaveResult[] = [];
 
-        const waveExecutionResults = await Promise.allSettled(
-          readyTasks.map(async (task) => {
-            const taskExecStartTime = Date.now();
-            const waveResult: TaskWaveResult = { taskId: task.id, startTime: taskExecStartTime };
-            waveResults.push(waveResult);
+          if (execConfig.batchDbUpdates && taskBatch.length > 0) {
+            const updatePromises = taskBatch.map((task) =>
+              this.db.update(dagSubSteps)
+                .set({ status: 'running', startedAt: new Date() })
+                .where(and(
+                  eq(dagSubSteps.taskId, task.id),
+                  eq(dagSubSteps.executionId, execId)
+                ))
+            );
+            await Promise.all(updatePromises);
+            this.logger.debug({ batchSize: taskBatch.length }, 'Batch updated tasks to running');
+          }
 
-            try {
-              const execResult = await executeTask(task);
-              taskResults.set(task.id, execResult.content);
-              executedTasks.add(task.id);
-              waveResult.result = execResult;
+          const batchExecutionResults = await Promise.allSettled(
+            taskBatch.map(async (task) => {
+              const taskExecStartTime = Date.now();
+              const waveResult: TaskWaveResult = { taskId: task.id, startTime: taskExecStartTime };
+              batchResults.push(waveResult);
 
-              const serializedResult = typeof execResult.content === 'string'
-                ? execResult.content
-                : JSON.stringify(execResult.content);
+              try {
+                const execResult = await executeTask(task);
+                taskResults.set(task.id, execResult.content);
+                executedTasks.add(task.id);
+                waveResult.result = execResult;
 
-              this.logger.debug({ taskId: task.id, result: serializedResult }, `╰─task ${task.id} result after executeTask():`);
+                const serializedResult = typeof execResult.content === 'string'
+                  ? execResult.content
+                  : JSON.stringify(execResult.content);
 
-              // Skip individual DB update if batching - will batch at wave end
-              if (!execConfig.batchDbUpdates) {
-                const subStepUpdate: Record<string, any> = {
-                  status: 'completed',
-                  result: serializedResult,
-                  completedAt: new Date(),
-                  durationMs: Date.now() - taskExecStartTime,
-                  usage: execResult.usage,
-                  generationId: execResult.generationId,
-                  costUsd: execResult.costUsd?.toString(),
-                  generationStats: execResult.generationStats,
-                };
+                this.logger.debug({ taskId: task.id, result: serializedResult }, `╰─task ${task.id} result after executeTask():`);
+
+                if (!execConfig.batchDbUpdates) {
+                  const subStepUpdate: Record<string, any> = {
+                    status: 'completed',
+                    result: serializedResult,
+                    completedAt: new Date(),
+                    durationMs: Date.now() - taskExecStartTime,
+                    usage: execResult.usage,
+                    generationId: execResult.generationId,
+                    costUsd: execResult.costUsd?.toString(),
+                    generationStats: execResult.generationStats,
+                  };
+
+                  await this.db.update(dagSubSteps)
+                    .set(subStepUpdate)
+                    .where(and(
+                      eq(dagSubSteps.taskId, task.id),
+                      eq(dagSubSteps.executionId, execId)
+                    ));
+                }
+
+                this.emitEventIfEnabled(execConfig, {
+                  type: ExecutionEventType.TaskCompleted,
+                  executionId: execId,
+                  ts: Date.now(),
+                  data: {
+                    taskId: task.id,
+                    durationMs: Date.now() - taskExecStartTime,
+                  },
+                });
+              } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                this.logger.error({ err: errorMessage, taskId: task.id }, `Task ${task.id} failed`);
+                waveResult.error = errorMessage;
 
                 await this.db.update(dagSubSteps)
-                  .set(subStepUpdate)
+                  .set({
+                    status: 'failed',
+                    error: errorMessage,
+                    completedAt: new Date(),
+                    durationMs: Date.now() - taskExecStartTime,
+                  })
                   .where(and(
                     eq(dagSubSteps.taskId, task.id),
                     eq(dagSubSteps.executionId, execId)
                   ));
+
+                this.emitEventIfEnabled(execConfig, {
+                  type: ExecutionEventType.TaskFailed,
+                  executionId: execId,
+                  ts: Date.now(),
+                  data: {
+                    taskId: task.id,
+                    durationMs: Date.now() - taskExecStartTime,
+                  },
+                  error: {
+                    message: errorMessage,
+                  },
+                });
+
+                throw error;
               }
+            })
+          );
 
-              this.emitEventIfEnabled(execConfig, {
-                type: ExecutionEventType.TaskCompleted,
-                executionId: execId,
-                ts: Date.now(),
-                data: {
-                  taskId: task.id,
-                  durationMs: Date.now() - taskExecStartTime,
-                },
-              });
-            } catch (error) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              this.logger.error({ err: errorMessage, taskId: task.id }, `Task ${task.id} failed`);
-              waveResult.error = errorMessage;
+          if (execConfig.batchDbUpdates) {
+            const completedResults = batchResults.filter((result) => result.result && !result.error);
+            if (completedResults.length > 0) {
+              const batchUpdatePromises = completedResults.map((result) => {
+                const serializedResult = typeof result.result!.content === 'string'
+                  ? result.result!.content
+                  : JSON.stringify(result.result!.content);
 
-              // Immediate update for failures (important for debugging)
-              await this.db.update(dagSubSteps)
-                .set({
-                  status: 'failed',
-                  error: errorMessage,
+                const batchUpdate: Record<string, any> = {
+                  status: 'completed',
+                  result: serializedResult,
                   completedAt: new Date(),
-                  durationMs: Date.now() - taskExecStartTime,
-                })
-                .where(and(
-                  eq(dagSubSteps.taskId, task.id),
-                  eq(dagSubSteps.executionId, execId)
-                ));
+                  durationMs: Date.now() - result.startTime,
+                  usage: result.result!.usage,
+                  generationId: result.result!.generationId,
+                  costUsd: result.result!.costUsd?.toString(),
+                  generationStats: result.result!.generationStats,
+                };
 
-              this.emitEventIfEnabled(execConfig, {
-                type: ExecutionEventType.TaskFailed,
-                executionId: execId,
-                ts: Date.now(),
-                data: {
-                  taskId: task.id,
-                  durationMs: Date.now() - taskExecStartTime,
-                },
-                error: {
-                  message: errorMessage,
-                },
+                return this.db.update(dagSubSteps)
+                  .set(batchUpdate)
+                  .where(and(
+                    eq(dagSubSteps.taskId, result.taskId),
+                    eq(dagSubSteps.executionId, execId)
+                  ));
               });
 
-              throw error;
+              await Promise.all(batchUpdatePromises);
+              this.logger.debug({
+                batchSize: completedResults.length,
+                waveDurationMs: Date.now() - waveStartTime,
+              }, 'Batch updated completed tasks');
             }
-          })
-        );
-
-        // Batch update completed tasks at wave end
-        if (execConfig.batchDbUpdates) {
-          const completedResults = waveResults.filter(r => r.result && !r.error);
-          if (completedResults.length > 0) {
-            const batchUpdatePromises = completedResults.map(wr => {
-              const serializedResult = typeof wr.result!.content === 'string'
-                ? wr.result!.content
-                : JSON.stringify(wr.result!.content);
-
-              const batchUpdate: Record<string, any> = {
-                status: 'completed',
-                result: serializedResult,
-                completedAt: new Date(),
-                durationMs: Date.now() - wr.startTime,
-                usage: wr.result!.usage,
-                generationId: wr.result!.generationId,
-                costUsd: wr.result!.costUsd?.toString(),
-                generationStats: wr.result!.generationStats,
-              };
-
-              return this.db.update(dagSubSteps)
-                .set(batchUpdate)
-                .where(and(
-                  eq(dagSubSteps.taskId, wr.taskId),
-                  eq(dagSubSteps.executionId, execId)
-                ));
-            });
-
-            await Promise.all(batchUpdatePromises);
-            this.logger.debug({
-              waveSize: completedResults.length,
-              waveDurationMs: Date.now() - waveStartTime,
-            }, 'Batch updated wave completed tasks');
           }
-        }
 
-        const waveFailure = waveExecutionResults.find(
-          (result): result is PromiseRejectedResult => result.status === 'rejected'
-        );
-        if (waveFailure) {
-          throw waveFailure.reason instanceof Error
-            ? waveFailure.reason
-            : new Error(String(waveFailure.reason));
+          const batchFailure = batchExecutionResults.find(
+            (result): result is PromiseRejectedResult => result.status === 'rejected'
+          );
+          if (batchFailure) {
+            throw batchFailure.reason instanceof Error
+              ? batchFailure.reason
+              : new Error(String(batchFailure.reason));
+          }
         }
 
         this.emitEventIfEnabled(execConfig, {
@@ -852,6 +908,11 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
             durationMs: Date.now() - waveStartTime,
           },
         });
+      }
+
+      if (executedTasks.size < job.sub_tasks.length) {
+        const remaining = job.sub_tasks.filter((task) => !executedTasks.has(task.id));
+        throw new Error(`DAG execution deadlock. Remaining tasks: ${remaining.map((task) => task.id).join(', ')}`);
       }
 
       this.logger.info('All tasks completed, running synthesis');
@@ -971,27 +1032,7 @@ Respond with ONLY the expected output format. Build upon dependencies for cohere
     failedTasks: number;
     waitingTasks: number;
   } {
-    const completed = subSteps.filter(s => s.status === 'completed').length;
-    const failed = subSteps.filter(s => s.status === 'failed').length;
-    const running = subSteps.filter(s => s.status === 'running').length;
-    const waiting = subSteps.filter(s => s.status === 'waiting').length;
-    const total = subSteps.filter(s => s.status !== 'deleted').length;
-
-    let status: 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'partial';
-
-    if (waiting > 0) {
-      status = 'waiting';
-    } else if (failed > 0 && completed + failed === total) {
-      status = failed === total ? 'failed' : 'partial';
-    } else if (completed === total) {
-      status = 'completed';
-    } else if (running > 0 || completed > 0) {
-      status = 'running';
-    } else {
-      status = 'pending';
-    }
-
-    return { status, completedTasks: completed, failedTasks: failed, waitingTasks: waiting };
+    return deriveExecutionStatusShared(subSteps);
   }
 
   private async synthesize(
@@ -1070,34 +1111,10 @@ Generate the final report in Markdown format as specified in the synthesis plan.
   }
 
   private aggregateUsage(allSubSteps: any[]): { promptTokens: number; completionTokens: number; totalTokens: number } | null {
-    let hasUsage = false;
-    let promptTokens = 0;
-    let completionTokens = 0;
-    let totalTokens = 0;
-
-    for (const step of allSubSteps) {
-      if (step.usage) {
-        hasUsage = true;
-        promptTokens += step.usage.promptTokens ?? 0;
-        completionTokens += step.usage.completionTokens ?? 0;
-        totalTokens += step.usage.totalTokens ?? 0;
-      }
-    }
-
-    return hasUsage ? { promptTokens, completionTokens, totalTokens } : null;
+    return aggregateUsageShared(allSubSteps);
   }
 
   private aggregateCost(allSubSteps: any[]): number | null {
-    let totalCost = 0;
-    let hasCost = false;
-
-    for (const step of allSubSteps) {
-      if (step.costUsd) {
-        hasCost = true;
-        totalCost += parseFloat(step.costUsd);
-      }
-    }
-
-    return hasCost ? totalCost : null;
+    return aggregateCostShared(allSubSteps);
   }
 }

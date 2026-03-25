@@ -51,12 +51,13 @@ describe('generateAllSQL', () => {
     expect(Array.isArray(result.tableNames)).toBe(true);
   });
 
-  it('tableNames includes agents, dags, dag_executions, sub_steps', () => {
+  it('tableNames includes agents, dags, dag_executions, sub_steps, policy_artifacts', () => {
     const { tableNames } = generateAllSQL();
     expect(tableNames).toContain('agents');
     expect(tableNames).toContain('dags');
     expect(tableNames).toContain('dag_executions');
     expect(tableNames).toContain('sub_steps');
+    expect(tableNames).toContain('policy_artifacts');
   });
 
   it('SQL contains CREATE TABLE statements', () => {
@@ -65,6 +66,7 @@ describe('generateAllSQL', () => {
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS dags');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS dag_executions');
     expect(sql).toContain('CREATE TABLE IF NOT EXISTS sub_steps');
+    expect(sql).toContain('CREATE TABLE IF NOT EXISTS policy_artifacts');
   });
 
   it('SQL contains CREATE VIEW for executions', () => {
@@ -125,7 +127,7 @@ describe('initDB', () => {
     const result = await initDB(dbPath);
     expect(result.success).toBe(true);
     expect(result.message).toContain('Database created successfully');
-    expect(result.tables).toEqual(expect.arrayContaining(['agents', 'dags', 'dag_executions', 'sub_steps']));
+    expect(result.tables).toEqual(expect.arrayContaining(['agents', 'dags', 'dag_executions', 'sub_steps', 'policy_artifacts']));
     expect(result.views).toContain('executions');
     expect(result.agentsSeeded).toBe(agentsSeedData.length);
     expect(existsSync(dbPath)).toBe(true);

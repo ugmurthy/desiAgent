@@ -178,6 +178,7 @@ export function generateAllSQL(): { sql: string; tableNames: string[] } {
     schema.dags,
     schema.dagExecutions,
     schema.dagSubSteps,
+    schema.policyArtifacts,
   ];
 
   const statements: string[] = [];

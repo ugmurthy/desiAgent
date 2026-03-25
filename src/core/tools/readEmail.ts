@@ -28,6 +28,7 @@ interface EmailMessage {
   messageId?: string;
   from?: string;
   to?: string;
+  cc?: string;
   subject?: string;
   date?: string;
   snippet?: string;
@@ -164,6 +165,7 @@ export class ReadEmailTool extends BaseTool<any, ReadEmailOutput> {
 
           const fromAddress = message.envelope?.from?.[0];
           const toAddress = message.envelope?.to?.[0];
+          const ccAddresses = message.envelope?.cc;
 
           const baseEmail: EmailMessage = {
             uid: message.uid,
@@ -173,6 +175,11 @@ export class ReadEmailTool extends BaseTool<any, ReadEmailOutput> {
               : undefined,
             to: toAddress
               ? `${toAddress.name || ''} <${toAddress.address}>`.trim()
+              : undefined,
+            cc: ccAddresses?.length
+              ? ccAddresses
+                  .map((a) => `${a.name || ''} <${a.address}>`.trim())
+                  .join(', ')
               : undefined,
             subject: message.envelope?.subject,
             date: message.envelope?.date?.toISOString(),

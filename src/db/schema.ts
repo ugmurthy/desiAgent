@@ -191,6 +191,37 @@ export const dagSubSteps = sqliteTable(
 );
 
 /**
+ * Policy artifacts table - stores policy decisions for execution auditability
+ */
+export const policyArtifacts = sqliteTable(
+  'policy_artifacts',
+  {
+    id: text('id').primaryKey(),
+    dagId: text('dag_id'),
+    executionId: text('execution_id'),
+    outcome: text('outcome', {
+      enum: ['allow', 'deny', 'needs_clarification', 'rewrite'],
+    }).notNull(),
+    mode: text('mode', { enum: ['lenient'] }).notNull().default('lenient'),
+    policyVersion: text('policy_version').notNull(),
+    directives: text('directives', { mode: 'json' }).$type<Record<string, any>>(),
+    violations: text('violations', { mode: 'json' }).$type<Array<Record<string, any>>>(),
+    rationale: text('rationale'),
+    createdAt: integer('created_at', { mode: 'timestamp' })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer('updated_at', { mode: 'timestamp' })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => ({
+    dagIdIdx: index('idx_policy_artifacts_dag_id').on(table.dagId),
+    executionIdIdx: index('idx_policy_artifacts_execution_id').on(table.executionId),
+    createdAtIdx: index('idx_policy_artifacts_created_at').on(table.createdAt),
+  })
+);
+
+/**
  * Executions view - joins dagExecutions with dags to get dagTitle
  */
 export const executions = sqliteView('executions', {
@@ -234,6 +265,8 @@ export type DagExecution = typeof dagExecutions.$inferSelect;
 export type NewDagExecution = typeof dagExecutions.$inferInsert;
 export type DagSubStep = typeof dagSubSteps.$inferSelect;
 export type NewDagSubStep = typeof dagSubSteps.$inferInsert;
+export type PolicyArtifact = typeof policyArtifacts.$inferSelect;
+export type NewPolicyArtifact = typeof policyArtifacts.$inferInsert;
 export type Execution = {
   dagTitle: string | null;
   id: string | null;
