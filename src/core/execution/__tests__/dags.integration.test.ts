@@ -40,13 +40,14 @@ vi.mock('../../../util/logger.js', () => ({
   }),
 }));
 
-type TableName = 'agents' | 'dags' | 'dag_executions' | 'sub_steps';
+type TableName = 'agents' | 'dags' | 'dag_executions' | 'sub_steps' | 'policy_artifacts';
 
 type InMemoryState = {
   agents: any[];
   dags: any[];
   dag_executions: any[];
   sub_steps: any[];
+  policy_artifacts: any[];
 };
 
 const TABLE_NAME = Symbol.for('drizzle:Name');
@@ -123,6 +124,7 @@ function createInMemoryDb(): any {
     dags: [],
     dag_executions: [],
     sub_steps: [],
+    policy_artifacts: [],
   };
 
   class SelectBuilder {
@@ -378,6 +380,13 @@ describe('DAGsService Integration', () => {
     expect(execution.id).toMatch(/^exec_/);
     expect(execution.status).toBe('pending');
     expect(dagExecutorExecuteMock).toHaveBeenCalledWith(expect.any(Object), execution.id, created.dagId, expect.any(String), undefined);
+    expect(db.__state.policy_artifacts).toHaveLength(1);
+    expect(db.__state.policy_artifacts[0]).toEqual(expect.objectContaining({
+      dagId: created.dagId,
+      executionId: execution.id,
+      outcome: 'allow',
+      mode: 'lenient',
+    }));
 
     const subSteps = await service.getSubSteps(execution.id);
     expect(subSteps.length).toBe(1);
@@ -452,6 +461,8 @@ describe('DAGsService Integration', () => {
     const resumed = await service.resume(execution.id);
     expect(resumed.status).toBe('running');
     expect(resumed.retryCount).toBe(1);
+    expect(db.__state.policy_artifacts).toHaveLength(2);
+    expect(db.__state.policy_artifacts.every((artifact: any) => artifact.executionId === execution.id)).toBe(true);
 
     const [subStep] = await service.getSubSteps(execution.id);
     await db
@@ -481,5 +492,58 @@ describe('DAGsService Integration', () => {
     const latestSubSteps = await db.query.dagSubSteps.findMany({ where: eq(dagSubSteps.executionId, execution.id) });
     expect(latestSubSteps.some((step: any) => step.status === 'deleted')).toBe(true);
     expect(latestSubSteps.some((step: any) => step.status === 'completed' && step.result === 'redo-inference-result')).toBe(true);
+  });
+
+  it('persists deny policy artifacts when execution is blocked', async () => {
+    const dagId = 'dag_policy_deny';
+    db.__state.dags.push({
+      id: dagId,
+      status: 'success',
+      result: {
+        original_request: 'run unknown tool',
+        intent: { primary: 'policy-test', sub_intents: [] },
+        entities: [],
+        sub_tasks: [
+          {
+            id: '001',
+            description: 'unsafe tool',
+            thought: 'this should be denied',
+            action_type: 'tool',
+            tool_or_prompt: { name: 'toolDoesNotExist', params: {} },
+            expected_output: 'none',
+            dependencies: [],
+          },
+        ],
+        synthesis_plan: 'n/a',
+        validation: { coverage: 'high', gaps: [], iteration_triggers: [] },
+        clarification_needed: false,
+        clarification_query: '',
+      },
+      usage: null,
+      generationStats: null,
+      attempts: 1,
+      params: { goalText: 'policy deny path' },
+      agentName: 'inference',
+      dagTitle: 'Policy deny case',
+      cronSchedule: null,
+      scheduleActive: false,
+      timezone: 'UTC',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      planningTotalUsage: null,
+      planningTotalCostUsd: null,
+      planningAttempts: null,
+    });
+
+    await expect(service.execute(dagId)).rejects.toThrow('Execution denied by policy');
+
+    expect(db.__state.policy_artifacts).toHaveLength(1);
+    expect(db.__state.policy_artifacts[0]).toEqual(expect.objectContaining({
+      dagId,
+      outcome: 'deny',
+      mode: 'lenient',
+    }));
+    expect(db.__state.policy_artifacts[0].executionId).toMatch(/^exec_/);
+    expect(db.__state.policy_artifacts[0].violations.some((violation: any) => violation.code === 'TOOL_NOT_FOUND')).toBe(true);
   });
 });

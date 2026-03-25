@@ -230,13 +230,15 @@ interface PolicyDecision {
 ## Current Status
 
 1. Phase 0 is implemented: shared helper extraction, execution plan compiler, and benchmark harness are added.
-1. Phase 1 foundation is started: lenient policy engine and policy artifact persistence are wired into execute/resume preflight.
+1. Phase 1 foundation is implemented in lenient mode: graph + capability + risk + budget preflight checks now run before execute/resume.
+1. Policy artifacts are persisted for both allow and deny outcomes, and integration tests validate this end-to-end.
+1. `execute/resume` now handle all policy outcomes safely (`allow`, `deny`, `needs_clarification`, `rewrite`) without API signature changes.
 
 ## Phase 1 (Policy layer foundation)
 
-1. Introduce `PolicyEngine` with static graph + capability rules only.
-1. Persist policy decision as metadata for observability.
-1. Keep outcome mostly `allow` to avoid behavioral surprises.
+1. Introduce `PolicyEngine` with staged graph/capability/risk/budget checks in lenient mode.
+1. Persist policy decisions as metadata artifacts for observability and auditability.
+1. Keep outcome mostly `allow`, while using `needs_clarification` for high-risk side-effect plans lacking dependency evidence.
 
 ## Phase 2 (Runtime optimization)
 
@@ -246,7 +248,7 @@ interface PolicyDecision {
 
 ## Phase 3 (Advanced governance)
 
-1. Budget-aware denial/clarification.
+1. Configurable budget-aware denial/clarification thresholds (instead of fixed defaults).
 1. Strict mode.
 1. Rule pack versioning and audit tooling.
 
@@ -266,8 +268,8 @@ interface PolicyDecision {
 
 ## Concrete Next Steps
 
-1. Implement `ExecutionPlanCompiler` and use it in executor.
-1. Add minimal `PolicyEngine` with graph/tool validation and directives.
-1. Wire policy decision into `DAGsService.execute()` without changing public signatures.
-1. Refactor duplicate context/aggregation helpers into shared modules.
+1. Feed policy directives beyond `maxParallelism` into executor retry/timeout behavior.
+1. Add configurable policy thresholds via runtime config/env while keeping backward-compatible defaults.
+1. Add richer policy repository/query surfaces for debugging and dashboards.
+1. Continue runtime optimization work (batched persistence + adaptive concurrency).
 1. Add performance regression tests for representative DAG sizes.

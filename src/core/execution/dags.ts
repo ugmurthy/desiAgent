@@ -224,6 +224,49 @@ export class DAGsService {
     }
   }
 
+  private policyReason(decision: PolicyDecision): string {
+    return decision.violations.map((violation) => violation.message).join('; ') || decision.rationale;
+  }
+
+  private async enforcePolicyDecision(
+    operation: 'execution' | 'resume',
+    dagId: string,
+    executionId: string,
+    originalJob: DecomposerJob,
+    decision: PolicyDecision,
+  ): Promise<DecomposerJob> {
+    await this.persistPolicyArtifact(dagId, executionId, decision);
+
+    if (decision.outcome === 'allow') {
+      return originalJob;
+    }
+
+    if (decision.outcome === 'rewrite') {
+      if (!decision.rewrittenJob) {
+        throw new ValidationError('Policy requested rewrite but did not provide rewritten job.', 'policy', decision);
+      }
+      return decision.rewrittenJob;
+    }
+
+    const reason = this.policyReason(decision);
+
+    if (decision.outcome === 'needs_clarification') {
+      const message = operation === 'resume'
+        ? `Execution resume requires policy clarification: ${reason}`
+        : `Execution requires policy clarification: ${reason}`;
+      throw new ValidationError(message, 'policy', decision);
+    }
+
+    if (decision.outcome === 'deny') {
+      const message = operation === 'resume'
+        ? `Execution resume denied by policy: ${reason}`
+        : `Execution denied by policy: ${reason}`;
+      throw new ValidationError(message, 'policy', decision);
+    }
+
+    throw new ValidationError(`Unsupported policy outcome '${decision.outcome}'.`, 'policy', decision);
+  }
+
   private registerScheduleIfActive(dagId: string, cronSchedule: string | null | undefined, scheduleActive: boolean, timezone: string): void {
     if (!this.scheduler || !cronSchedule || !scheduleActive) {
       return;
@@ -839,22 +882,18 @@ export class DAGsService {
       requestedMaxParallelism: _options?.executionConfig?.maxParallelism,
     });
 
-    if (policyDecision.outcome === 'deny') {
-      await this.persistPolicyArtifact(dagId, executionId, policyDecision);
-      const reason = policyDecision.violations.map((violation) => violation.message).join('; ') || policyDecision.rationale;
-      throw new ValidationError(`Execution denied by policy: ${reason}`, 'policy', policyDecision);
-    }
+    const executableJob = await this.enforcePolicyDecision('execution', dagId, executionId, job, policyDecision);
 
-    const originalGoalText = (dagRecord.params as any)?.goalText || job.original_request;
+    const originalGoalText = (dagRecord.params as any)?.goalText || executableJob.original_request;
     const now = new Date();
 
     await this.db.insert(dagExecutions).values({
       id: executionId,
       dagId: dagId,
       originalRequest: originalGoalText,
-      primaryIntent: job.intent.primary,
+      primaryIntent: executableJob.intent.primary,
       status: 'pending',
-      totalTasks: job.sub_tasks.length,
+      totalTasks: executableJob.sub_tasks.length,
       completedTasks: 0,
       failedTasks: 0,
       waitingTasks: 0,
@@ -864,7 +903,7 @@ export class DAGsService {
     });
 
     await this.db.insert(dagSubSteps).values(
-      job.sub_tasks.map((task) => ({
+      executableJob.sub_tasks.map((task) => ({
         id: generateSubStepId(),
         executionId: executionId,
         taskId: task.id,
@@ -883,11 +922,9 @@ export class DAGsService {
     this.logger.info({
       executionId,
       dagId,
-      primaryIntent: job.intent.primary,
-      totalTasks: job.sub_tasks.length,
+      primaryIntent: executableJob.intent.primary,
+      totalTasks: executableJob.sub_tasks.length,
     }, 'DAG execution records created');
-
-    await this.persistPolicyArtifact(dagId, executionId, policyDecision);
 
     // Execute the DAG asynchronously (fire and forget)
     const dagExecutor = new DAGExecutor({
@@ -912,7 +949,7 @@ export class DAGsService {
         }
       : undefined;
 
-    dagExecutor.execute(job, executionId, dagId, originalGoalText, effectiveExecutionConfig).catch((error) => {
+    dagExecutor.execute(executableJob, executionId, dagId, originalGoalText, effectiveExecutionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG execution failed');
     });
 
@@ -969,11 +1006,7 @@ export class DAGsService {
       requestedMaxParallelism: executionConfig?.maxParallelism,
     });
 
-    if (policyDecision.outcome === 'deny') {
-      await this.persistPolicyArtifact(execution.dagId, executionId, policyDecision);
-      const reason = policyDecision.violations.map((violation) => violation.message).join('; ') || policyDecision.rationale;
-      throw new ValidationError(`Execution resume denied by policy: ${reason}`, 'policy', policyDecision);
-    }
+    const executableJob = await this.enforcePolicyDecision('resume', execution.dagId, executionId, job, policyDecision);
 
     const newRetryCount = (execution.retryCount || 0) + 1;
     const now = new Date();
@@ -995,9 +1028,7 @@ export class DAGsService {
       previousStatus: execution.status,
     }, 'Resuming DAG execution');
 
-    const originalGoalText = (dagRecord.params as any)?.goalText || job.original_request;
-
-    await this.persistPolicyArtifact(execution.dagId, executionId, policyDecision);
+    const originalGoalText = (dagRecord.params as any)?.goalText || executableJob.original_request;
 
     const dagExecutor = new DAGExecutor({
       db: this.db,
@@ -1021,7 +1052,7 @@ export class DAGsService {
         }
       : undefined;
 
-    dagExecutor.execute(job, executionId, execution.dagId, originalGoalText, effectiveExecutionConfig).catch((error) => {
+    dagExecutor.execute(executableJob, executionId, execution.dagId, originalGoalText, effectiveExecutionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG resume execution failed');
     });
 

@@ -35,6 +35,8 @@ export interface PolicyEvaluationContext {
   dagId?: string;
   executionId?: string;
   requestedMaxParallelism?: number;
+  requestedMaxExecutionCostUsd?: number;
+  requestedMaxExecutionTokens?: number;
 }
 
 export interface PolicyEngine {
