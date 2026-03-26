@@ -233,6 +233,7 @@ interface PolicyDecision {
 1. Phase 1 foundation is implemented in lenient mode: graph + capability + risk + budget preflight checks now run before execute/resume.
 1. Policy artifacts are persisted for both allow and deny outcomes, and integration tests validate this end-to-end.
 1. `execute/resume` now handle all policy outcomes safely (`allow`, `deny`, `needs_clarification`, `rewrite`) without API signature changes.
+1. Phase 2 runtime work is now implemented: wave-level batched persistence uses transactions when available (with safe fallback), policy directives are wired into executor runtime config, adaptive concurrency is enabled, and retry/timeout handling is standardized by task class.
 
 ## Phase 1 (Policy layer foundation)
 
@@ -245,6 +246,7 @@ interface PolicyDecision {
 1. Enable batched wave persistence transactions.
 1. Enable adaptive concurrency directives from policy.
 1. Standardize retry/timeout behavior per task class.
+1. Add runtime budget guardrails using policy-provided token/cost limits.
 
 ## Phase 3 (Advanced governance)
 
@@ -268,8 +270,9 @@ interface PolicyDecision {
 
 ## Concrete Next Steps
 
-1. Feed policy directives beyond `maxParallelism` into executor retry/timeout behavior.
+1. Harden and benchmark policy-directive propagation in executor runtime under mixed workloads.
+1. Tune adaptive concurrency and retry heuristics with benchmark-driven thresholds.
 1. Add configurable policy thresholds via runtime config/env while keeping backward-compatible defaults.
 1. Add richer policy repository/query surfaces for debugging and dashboards.
-1. Continue runtime optimization work (batched persistence + adaptive concurrency).
+1. Add budget-guardrail telemetry to execution traces and dashboards.
 1. Add performance regression tests for representative DAG sizes.

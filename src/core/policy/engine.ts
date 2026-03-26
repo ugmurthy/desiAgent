@@ -127,7 +127,7 @@ export class LenientPolicyEngine implements PolicyEngine {
     );
 
     const maxExecutionTokens = Math.max(
-      1000,
+      500000,
       Math.min(
         Math.ceil(budget.estimatedTokens * 1.25),
         context.requestedMaxExecutionTokens ?? HARD_TOKEN_BUDGET,
@@ -137,7 +137,7 @@ export class LenientPolicyEngine implements PolicyEngine {
 
     const maxExecutionCostUsd = Number(
       Math.max(
-        0.001,
+        0.50,
         Math.min(
           Number((budget.estimatedCostUsd * 1.25).toFixed(4)),
           context.requestedMaxExecutionCostUsd ?? HARD_COST_BUDGET_USD,

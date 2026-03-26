@@ -1,6 +1,6 @@
-import { resolve } from 'path';
 import { LlmExecuteTool } from '../tools/llmExecute.js';
 import type { SkillMeta, SkillRegistry } from '../skills/registry.js';
+import { loadExecutableSkillHandler } from '../skills/executableHandler.js';
 import type {
   SkillTestInput,
   SkillTestResult,
@@ -19,8 +19,6 @@ export interface SkillsServiceDeps {
   ollamaBaseUrl?: string;
   skipGenerationStats?: boolean;
 }
-
-type ExecutableSkillHandler = (params: Record<string, unknown>) => Promise<unknown>;
 
 function isSkillProvider(value: string | undefined): value is SkillTestableProvider {
   return value === 'openai' || value === 'openrouter' || value === 'ollama';
@@ -109,29 +107,16 @@ export class SkillsService {
     skill: SkillMeta,
     params: Record<string, unknown>,
   ): Promise<unknown> {
-    const handlerPath = resolve(skill.filePath, '..', 'handler.ts');
     try {
-      const mod = await import(`file://${handlerPath}`);
-      const handler = mod.default ?? mod.handler;
-
-      if (typeof handler !== 'function') {
-        throw new ValidationError(
-          `Skill "${skill.name}" is not executable or missing handler`,
-          'handler',
-          handlerPath,
-        );
-      }
-
-      return (handler as ExecutableSkillHandler)(params);
+      const { handler } = await loadExecutableSkillHandler(skill.name, skill.filePath);
+      return handler(params);
     } catch (error) {
-      if (error instanceof ValidationError) {
-        throw error;
-      }
+      const reason = error instanceof Error ? error.message : String(error);
 
       throw new ValidationError(
-        `Skill "${skill.name}" is not executable or missing handler`,
+        reason,
         'handler',
-        handlerPath,
+        skill.filePath,
       );
     }
   }

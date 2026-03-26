@@ -379,7 +379,17 @@ describe('DAGsService Integration', () => {
     const execution = await service.execute(created.dagId);
     expect(execution.id).toMatch(/^exec_/);
     expect(execution.status).toBe('pending');
-    expect(dagExecutorExecuteMock).toHaveBeenCalledWith(expect.any(Object), execution.id, created.dagId, expect.any(String), undefined);
+    expect(dagExecutorExecuteMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      execution.id,
+      created.dagId,
+      expect.any(String),
+      expect.objectContaining({
+        maxParallelism: 5,
+        maxRetriesPerTask: 2,
+        retryBackoffMs: 1000,
+      }),
+    );
     expect(db.__state.policy_artifacts).toHaveLength(1);
     expect(db.__state.policy_artifacts[0]).toEqual(expect.objectContaining({
       dagId: created.dagId,
@@ -461,6 +471,18 @@ describe('DAGsService Integration', () => {
     const resumed = await service.resume(execution.id);
     expect(resumed.status).toBe('running');
     expect(resumed.retryCount).toBe(1);
+    expect(dagExecutorExecuteMock).toHaveBeenNthCalledWith(
+      2,
+      expect.any(Object),
+      execution.id,
+      planned.dagId,
+      expect.any(String),
+      expect.objectContaining({
+        maxParallelism: 5,
+        maxRetriesPerTask: 2,
+        timeoutMsPerTask: 30000,
+      }),
+    );
     expect(db.__state.policy_artifacts).toHaveLength(2);
     expect(db.__state.policy_artifacts.every((artifact: any) => artifact.executionId === execution.id)).toBe(true);
 
@@ -492,6 +514,91 @@ describe('DAGsService Integration', () => {
     const latestSubSteps = await db.query.dagSubSteps.findMany({ where: eq(dagSubSteps.executionId, execution.id) });
     expect(latestSubSteps.some((step: any) => step.status === 'deleted')).toBe(true);
     expect(latestSubSteps.some((step: any) => step.status === 'completed' && step.result === 'redo-inference-result')).toBe(true);
+  });
+
+  it('uses soft policy directives as defaults while preserving explicit execution config overrides', async () => {
+    const dagId = 'dag_policy_soft_defaults';
+    db.__state.dags.push({
+      id: dagId,
+      status: 'success',
+      result: {
+        original_request: 'fetch page and summarize',
+        intent: { primary: 'policy-test', sub_intents: [] },
+        entities: [],
+        sub_tasks: [
+          {
+            id: '001',
+            description: 'fetch page',
+            thought: 'network task to trigger network timeout directive',
+            action_type: 'tool',
+            tool_or_prompt: {
+              name: 'fetchPage',
+              params: { url: 'https://example.com' },
+            },
+            expected_output: 'page content',
+            dependencies: [],
+          },
+        ],
+        synthesis_plan: 'n/a',
+        validation: { coverage: 'high', gaps: [], iteration_triggers: [] },
+        clarification_needed: false,
+        clarification_query: '',
+      },
+      usage: null,
+      generationStats: null,
+      attempts: 1,
+      params: { goalText: 'policy soft defaults path' },
+      agentName: 'inference',
+      dagTitle: 'Policy soft defaults case',
+      cronSchedule: null,
+      scheduleActive: false,
+      timezone: 'UTC',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      planningTotalUsage: null,
+      planningTotalCostUsd: null,
+      planningAttempts: null,
+    });
+
+    await service.execute(dagId, { policyEnforcement: 'soft' });
+
+    expect(dagExecutorExecuteMock).toHaveBeenNthCalledWith(
+      1,
+      expect.any(Object),
+      expect.any(String),
+      dagId,
+      expect.any(String),
+      expect.objectContaining({
+        maxParallelism: 5,
+        maxRetriesPerTask: 2,
+        retryBackoffMs: 1000,
+        timeoutMsPerTask: 45000,
+      }),
+    );
+
+    await service.execute(dagId, {
+      policyEnforcement: 'soft',
+      executionConfig: {
+        maxParallelism: 3,
+        maxRetriesPerTask: 0,
+        retryBackoffMs: 500,
+        timeoutMsPerTask: 42000,
+      },
+    });
+
+    expect(dagExecutorExecuteMock).toHaveBeenNthCalledWith(
+      2,
+      expect.any(Object),
+      expect.any(String),
+      dagId,
+      expect.any(String),
+      expect.objectContaining({
+        maxParallelism: 3,
+        maxRetriesPerTask: 0,
+        retryBackoffMs: 500,
+        timeoutMsPerTask: 42000,
+      }),
+    );
   });
 
   it('persists deny policy artifacts when execution is blocked', async () => {

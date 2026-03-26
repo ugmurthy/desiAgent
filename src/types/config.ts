@@ -12,6 +12,8 @@ export type LLMProvider = 'openai' | 'openrouter' | 'ollama';
  */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
 
+export type PolicyEnforcement = 'soft' | 'hard';
+
 /**
  * Zod schema for validating configuration
  */
@@ -48,6 +50,7 @@ export const DesiAgentConfigSchema = z.object({
 
   // Feature flags
   autoStartScheduler: z.boolean().optional().default(true),
+  policyEnforcement: z.enum(['soft', 'hard']).optional().default('hard'),
   enableToolValidation: z.boolean().optional().default(true),
   skipGenerationStats: z.boolean().optional().default(false),
   statsReconcileIntervalMs: z.number().int().positive().optional().default(30_000),
@@ -97,6 +100,7 @@ export interface DesiAgentConfig {
 
   // Feature flags
   autoStartScheduler?: boolean;
+  policyEnforcement?: PolicyEnforcement;
   enableToolValidation?: boolean;
   skipGenerationStats?: boolean;
   statsReconcileIntervalMs?: number;
@@ -138,6 +142,7 @@ export interface ResolvedConfig {
 
   staleExecutionMinutes: number;
   autoStartScheduler: boolean;
+  policyEnforcement: PolicyEnforcement;
   enableToolValidation: boolean;
   skipGenerationStats: boolean;
   statsReconcileIntervalMs: number;
@@ -224,6 +229,7 @@ export function resolveConfig(validated: z.infer<typeof DesiAgentConfigSchema>):
 
     staleExecutionMinutes: parseInt(process.env.STALE_EXECUTION_MINUTES || '5', 10),
     autoStartScheduler: validated.autoStartScheduler,
+    policyEnforcement: validated.policyEnforcement,
     enableToolValidation: validated.enableToolValidation,
     skipGenerationStats: validated.skipGenerationStats,
     statsReconcileIntervalMs: Number.isFinite(statsReconcileIntervalMs) && statsReconcileIntervalMs > 0

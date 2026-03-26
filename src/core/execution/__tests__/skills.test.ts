@@ -102,7 +102,7 @@ describe('SkillsService', () => {
     expect(refreshedList.map(s => s.name)).toContain('skill-two');
   });
 
-  it('test() executes executable skills via handler.ts', async () => {
+  it('test() executes executable skills via handler.ts fallback', async () => {
     await writeSkill(tempDir, 'echo-skill', {
       name: 'echo-skill',
       description: 'Executable echo skill for direct test',
@@ -132,6 +132,42 @@ describe('SkillsService', () => {
     expect(result.name).toBe('echo-skill');
     expect(result.type).toBe('executable');
     expect(result.output).toBe('echo:{"value":42}');
+  });
+
+  it('test() prefers handler.js when both JS and TS handlers exist', async () => {
+    await writeSkill(tempDir, 'echo-js-skill', {
+      name: 'echo-js-skill',
+      description: 'Executable skill should prefer JavaScript handler in dist runtime',
+      type: 'executable',
+    });
+
+    await writeFile(
+      join(tempDir, '.agents', 'skills', 'echo-js-skill', 'handler.ts'),
+      'export default async function handler(params) { return `ts:${JSON.stringify(params)}`; }\n',
+    );
+
+    await writeFile(
+      join(tempDir, '.agents', 'skills', 'echo-js-skill', 'handler.js'),
+      'export default async function handler(params) { return `js:${JSON.stringify(params)}`; }\n',
+    );
+
+    const registry = new SkillRegistry(tempDir);
+    await registry.discover();
+
+    const service = new SkillsService({
+      skillRegistry: registry,
+      defaultProvider: 'openai',
+      defaultModel: 'gpt-4o',
+      artifactsDir: join(tempDir, 'artifacts'),
+    });
+
+    const result = await service.test({
+      name: 'echo-js-skill',
+      params: { value: 7 },
+    });
+
+    expect(result.type).toBe('executable');
+    expect(result.output).toBe('js:{"value":7}');
   });
 
   it('test() executes context skills with provider/model precedence', async () => {

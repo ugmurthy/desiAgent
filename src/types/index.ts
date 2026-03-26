@@ -6,7 +6,7 @@
 
 // Configuration types
 export type { DesiAgentConfig, ProcessedDesiAgentConfig } from './config.js';
-export { DesiAgentConfigSchema, type LLMProvider, type LogLevel } from './config.js';
+export { DesiAgentConfigSchema, type LLMProvider, type LogLevel, type PolicyEnforcement } from './config.js';
 
 // Execution types
 export {

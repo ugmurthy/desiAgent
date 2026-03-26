@@ -166,7 +166,7 @@ try {
       params: Object.keys(params).length > 0 ? params : undefined,
       overrides: {provider:"openrouter"}
     },
-    { db }
+    { db,apiKey:process.env.OPENROUTER_API_KEY }
   );
 
   if (values.output) {

@@ -252,7 +252,7 @@ Skills are reusable instruction files (`SKILL.md`) that extend what the agent ca
 | Type | Behaviour |
 |---|---|
 | `context` | The skill's Markdown body is loaded and injected as instructions into an LLM inference call during DAG execution. |
-| `executable` | A sibling `handler.ts` file is imported and its default export is called with the task parameters. |
+| `executable` | A sibling handler module is imported (`handler.js`, `handler.mjs`, `handler.cjs`, or TypeScript fallback like `handler.ts`) and its default export (or named `handler`) is called with the task parameters. |
 
 ### SKILL.md Format
 

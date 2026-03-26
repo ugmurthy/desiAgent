@@ -10,6 +10,8 @@ import type {
 } from './execution.js';
 import type { Agent, ToolDefinition } from './agent.js';
 import type { SkillMeta } from '../core/skills/registry.js';
+import type { ExecutionConfig } from '../core/execution/dagExecutor.js';
+import type { PolicyEnforcement } from './config.js';
 
 /**
  * Agents service interface
@@ -99,8 +101,14 @@ export interface DAGsService {
   createFromGoal(options: CreateDAGFromGoalOptions): Promise<DAGPlanningResult>;
   createAndExecuteFromGoal(options: CreateDAGFromGoalOptions): Promise<CreateAndExecuteResult>;
   resumeFromClarification(dagId: string, userResponse: string): Promise<DAGPlanningResult>;
-  execute(dagId: string, options?: { provider?: string; model?: string }): Promise<{ id: string; status: string }>;
-  resume(executionId: string): Promise<{ id: string; status: string; retryCount: number }>;
+  execute(
+    dagId: string,
+    options?: { provider?: string; model?: string; policyEnforcement?: PolicyEnforcement; executionConfig?: ExecutionConfig }
+  ): Promise<{ id: string; status: string }>;
+  resume(
+    executionId: string,
+    options?: ExecutionConfig | { executionConfig?: ExecutionConfig; policyEnforcement?: PolicyEnforcement }
+  ): Promise<{ id: string; status: string; retryCount: number }>;
   redoInference(
     executionId: string,
     params?: { provider?: 'openai' | 'openrouter' | 'ollama'; model?: string }

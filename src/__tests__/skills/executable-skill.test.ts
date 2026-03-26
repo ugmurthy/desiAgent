@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { SkillRegistry } from '../../core/skills/registry.js';
 import { MinimalSkillDetector } from '../../core/skills/detector.js';
+import { loadExecutableSkillHandler } from '../../core/skills/executableHandler.js';
 import { resolve } from 'path';
 import { homedir } from 'os';
 
@@ -36,9 +37,8 @@ describe('Integration: executable skill execution from ~/.desiAgent/skills', () 
     beforeAll(async () => {
       const skill = registry.getByName('git-expert');
       expect(skill).toBeDefined();
-      const handlerPath = resolve(skill!.filePath, '..', 'handler.ts');
-      const mod = await import(`file://${handlerPath}`);
-      handler = mod.default;
+      const loaded = await loadExecutableSkillHandler(skill!.name, skill!.filePath);
+      handler = loaded.handler as (args: { command: string; repoPath?: string }) => Promise<string>;
       expect(typeof handler).toBe('function');
     });
 

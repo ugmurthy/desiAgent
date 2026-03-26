@@ -283,6 +283,7 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       smtp: resolved.smtp,
       imap: resolved.imap,
       staleExecutionMinutes: resolved.staleExecutionMinutes,
+      policyEnforcement: resolved.policyEnforcement,
       apiKey: resolved.apiKey,
       ollamaBaseUrl: resolved.ollamaBaseUrl,
       skipGenerationStats: resolved.skipGenerationStats,
@@ -356,7 +357,7 @@ function validateConfig(config: DesiAgentConfig): z.infer<typeof DesiAgentConfig
 }
 
 // Export all public types and errors
-export type { DesiAgentConfig, ProcessedDesiAgentConfig, ResolvedConfig } from './types/config.js';
+export type { DesiAgentConfig, ProcessedDesiAgentConfig, ResolvedConfig, PolicyEnforcement } from './types/config.js';
 export { DesiAgentConfigSchema, resolveConfig } from './types/config.js';
 export type { DesiAgentClient } from './types/index.js';
 export {
@@ -402,6 +403,7 @@ export type {
   DAGCreatedResult,
   ValidationErrorResult,
   ExecuteOptions,
+  ResumeOptions,
   RunExperimentsInput,
   DagScheduler,
   DAGsServiceDeps,

@@ -2,6 +2,8 @@ import type { DecomposerJob } from '../../types/dag.js';
 
 export type PolicyMode = 'lenient';
 
+export type PolicyEnforcement = 'soft' | 'hard';
+
 export type PolicyOutcome = 'allow' | 'deny' | 'needs_clarification' | 'rewrite';
 
 export interface PolicyViolation {

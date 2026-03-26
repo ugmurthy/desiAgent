@@ -34,7 +34,7 @@ import type { StatsQueue } from '../workers/statsQueue.js';
 import { buildGlobalContext as buildGlobalContextShared, buildInferencePrompt as buildInferencePromptShared } from './contextBuilder.js';
 import { deriveExecutionStatus as deriveExecutionStatusShared, aggregateUsage as aggregateUsageShared, aggregateCost as aggregateCostShared } from './executionAggregates.js';
 import { LenientPolicyEngine } from '../policy/engine.js';
-import type { PolicyDecision, PolicyEngine } from '../policy/types.js';
+import type { PolicyDecision, PolicyEngine, PolicyEnforcement } from '../policy/types.js';
 
 export function generateDAGId(): string {
   return `dag_${nanoid(21)}`;
@@ -75,6 +75,7 @@ export interface DAGsServiceDeps {
   skillRegistry?: SkillRegistry;
   statsQueue?: StatsQueue;
   policyEngine?: PolicyEngine;
+  policyEnforcement?: PolicyEnforcement;
 }
 
 export interface CreateDAGFromGoalOptions {
@@ -136,10 +137,16 @@ export type CreateAndExecuteResult = ClarificationRequiredResult | ValidationErr
 export interface ExecuteOptions {
   provider?: 'openai' | 'openrouter' | 'ollama';
   model?: string;
+  policyEnforcement?: PolicyEnforcement;
   /**
    * Execution configuration for performance tuning
    */
   executionConfig?: ExecutionConfig;
+}
+
+export interface ResumeOptions {
+  executionConfig?: ExecutionConfig;
+  policyEnforcement?: PolicyEnforcement;
 }
 
 export interface RedoInferenceParams {
@@ -180,6 +187,7 @@ export class DAGsService {
   private skillRegistry?: SkillRegistry;
   private statsQueue?: StatsQueue;
   private policyEngine: PolicyEngine;
+  private defaultPolicyEnforcement: PolicyEnforcement;
   private logger = getLogger();
 
   constructor(deps: DAGsServiceDeps) {
@@ -198,6 +206,7 @@ export class DAGsService {
     this.skillRegistry = deps.skillRegistry;
     this.statsQueue = deps.statsQueue;
     this.policyEngine = deps.policyEngine ?? new LenientPolicyEngine(this.toolRegistry, 5);
+    this.defaultPolicyEnforcement = deps.policyEnforcement ?? 'hard';
   }
 
   private async persistPolicyArtifact(
@@ -228,12 +237,79 @@ export class DAGsService {
     return decision.violations.map((violation) => violation.message).join('; ') || decision.rationale;
   }
 
+  private resolvePolicyEnforcement(override?: PolicyEnforcement): PolicyEnforcement {
+    return override ?? this.defaultPolicyEnforcement;
+  }
+
+  private normalizeResumeOptions(options?: ExecutionConfig | ResumeOptions): ResumeOptions {
+    if (!options) {
+      return {};
+    }
+
+    const candidate = options as ResumeOptions;
+    if (typeof candidate === 'object' && ('executionConfig' in candidate || 'policyEnforcement' in candidate)) {
+      return candidate;
+    }
+
+    return { executionConfig: options as ExecutionConfig };
+  }
+
+  private buildExecutionConfigWithPolicy(
+    executionConfig: ExecutionConfig | undefined,
+    policyDecision: PolicyDecision,
+    policyEnforcement: PolicyEnforcement,
+  ): ExecutionConfig {
+    const policyExecutionDirectives: ExecutionConfig = {
+      maxParallelism: policyDecision.directives.maxParallelism,
+      maxRetriesPerTask: policyDecision.directives.maxRetriesPerTask,
+      retryBackoffMs: policyDecision.directives.retryBackoffMs,
+      timeoutMsPerTask: policyDecision.directives.timeoutMsPerTask,
+      maxExecutionCostUsd: policyDecision.directives.maxExecutionCostUsd,
+      maxExecutionTokens: policyDecision.directives.maxExecutionTokens,
+    };
+
+    if (policyEnforcement === 'soft') {
+      this.logger.warn(
+        {
+          enforcement: policyEnforcement,
+          directives: policyDecision.directives,
+          policyVersion: policyDecision.policyVersion,
+          outcome: policyDecision.outcome,
+        },
+        'Policy directives are advisory in soft enforcement mode and are applied as defaults unless execution config overrides them',
+      );
+
+      return {
+        ...executionConfig,
+        maxParallelism: executionConfig?.maxParallelism ?? policyExecutionDirectives.maxParallelism,
+        maxRetriesPerTask: executionConfig?.maxRetriesPerTask ?? policyExecutionDirectives.maxRetriesPerTask,
+        retryBackoffMs: executionConfig?.retryBackoffMs ?? policyExecutionDirectives.retryBackoffMs,
+        timeoutMsPerTask: executionConfig?.timeoutMsPerTask ?? policyExecutionDirectives.timeoutMsPerTask,
+        maxExecutionCostUsd: executionConfig?.maxExecutionCostUsd ?? policyExecutionDirectives.maxExecutionCostUsd,
+        maxExecutionTokens: executionConfig?.maxExecutionTokens ?? policyExecutionDirectives.maxExecutionTokens,
+      };
+    }
+
+    return executionConfig
+      ? {
+          ...executionConfig,
+          maxParallelism: policyExecutionDirectives.maxParallelism,
+          maxRetriesPerTask: policyExecutionDirectives.maxRetriesPerTask,
+          retryBackoffMs: policyExecutionDirectives.retryBackoffMs,
+          timeoutMsPerTask: policyExecutionDirectives.timeoutMsPerTask,
+          maxExecutionCostUsd: policyExecutionDirectives.maxExecutionCostUsd,
+          maxExecutionTokens: policyExecutionDirectives.maxExecutionTokens,
+        }
+      : policyExecutionDirectives;
+  }
+
   private async enforcePolicyDecision(
     operation: 'execution' | 'resume',
     dagId: string,
     executionId: string,
     originalJob: DecomposerJob,
     decision: PolicyDecision,
+    policyEnforcement: PolicyEnforcement,
   ): Promise<DecomposerJob> {
     await this.persistPolicyArtifact(dagId, executionId, decision);
 
@@ -243,12 +319,41 @@ export class DAGsService {
 
     if (decision.outcome === 'rewrite') {
       if (!decision.rewrittenJob) {
+        if (policyEnforcement === 'soft') {
+          this.logger.warn(
+            {
+              dagId,
+              executionId,
+              operation,
+              outcome: decision.outcome,
+              policyVersion: decision.policyVersion,
+            },
+            'Policy returned rewrite without rewritten job; continuing due to soft enforcement',
+          );
+          return originalJob;
+        }
         throw new ValidationError('Policy requested rewrite but did not provide rewritten job.', 'policy', decision);
       }
       return decision.rewrittenJob;
     }
 
     const reason = this.policyReason(decision);
+
+    if (policyEnforcement === 'soft') {
+      this.logger.warn(
+        {
+          dagId,
+          executionId,
+          operation,
+          outcome: decision.outcome,
+          reason,
+          policyVersion: decision.policyVersion,
+          violations: decision.violations,
+        },
+        'Policy produced a blocking outcome; continuing due to soft enforcement',
+      );
+      return originalJob;
+    }
 
     if (decision.outcome === 'needs_clarification') {
       const message = operation === 'resume'
@@ -880,9 +985,19 @@ export class DAGsService {
       dagId,
       executionId,
       requestedMaxParallelism: _options?.executionConfig?.maxParallelism,
+      requestedMaxExecutionCostUsd: _options?.executionConfig?.maxExecutionCostUsd,
+      requestedMaxExecutionTokens: _options?.executionConfig?.maxExecutionTokens,
     });
+    const policyEnforcement = this.resolvePolicyEnforcement(_options?.policyEnforcement);
 
-    const executableJob = await this.enforcePolicyDecision('execution', dagId, executionId, job, policyDecision);
+    const executableJob = await this.enforcePolicyDecision(
+      'execution',
+      dagId,
+      executionId,
+      job,
+      policyDecision,
+      policyEnforcement,
+    );
 
     const originalGoalText = (dagRecord.params as any)?.goalText || executableJob.original_request;
     const now = new Date();
@@ -942,12 +1057,11 @@ export class DAGsService {
     });
 
     // Start execution in background - don't await
-    const effectiveExecutionConfig = _options?.executionConfig
-      ? {
-          ..._options.executionConfig,
-          maxParallelism: policyDecision.directives.maxParallelism,
-        }
-      : undefined;
+    const effectiveExecutionConfig = this.buildExecutionConfigWithPolicy(
+      _options?.executionConfig,
+      policyDecision,
+      policyEnforcement,
+    );
 
     dagExecutor.execute(executableJob, executionId, dagId, originalGoalText, effectiveExecutionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG execution failed');
@@ -956,7 +1070,8 @@ export class DAGsService {
     return { id: executionId, status: 'pending' };
   }
 
-  async resume(executionId: string, executionConfig?: ExecutionConfig): Promise<{ id: string; status: string; retryCount: number }> {
+  async resume(executionId: string, options?: ExecutionConfig | ResumeOptions): Promise<{ id: string; status: string; retryCount: number }> {
+    const resumeOptions = this.normalizeResumeOptions(options);
     const [execution] = await this.db.select().from(dagExecutions).where(eq(dagExecutions.id, executionId)).limit(1);
 
     if (!execution) {
@@ -1003,10 +1118,20 @@ export class DAGsService {
     const policyDecision = this.policyEngine.evaluate(job, {
       dagId: execution.dagId,
       executionId,
-      requestedMaxParallelism: executionConfig?.maxParallelism,
+      requestedMaxParallelism: resumeOptions.executionConfig?.maxParallelism,
+      requestedMaxExecutionCostUsd: resumeOptions.executionConfig?.maxExecutionCostUsd,
+      requestedMaxExecutionTokens: resumeOptions.executionConfig?.maxExecutionTokens,
     });
+    const policyEnforcement = this.resolvePolicyEnforcement(resumeOptions.policyEnforcement);
 
-    const executableJob = await this.enforcePolicyDecision('resume', execution.dagId, executionId, job, policyDecision);
+    const executableJob = await this.enforcePolicyDecision(
+      'resume',
+      execution.dagId,
+      executionId,
+      job,
+      policyDecision,
+      policyEnforcement,
+    );
 
     const newRetryCount = (execution.retryCount || 0) + 1;
     const now = new Date();
@@ -1045,12 +1170,11 @@ export class DAGsService {
     });
 
     // Start execution in background - don't await
-    const effectiveExecutionConfig = executionConfig
-      ? {
-          ...executionConfig,
-          maxParallelism: policyDecision.directives.maxParallelism,
-        }
-      : undefined;
+    const effectiveExecutionConfig = this.buildExecutionConfigWithPolicy(
+      resumeOptions.executionConfig,
+      policyDecision,
+      policyEnforcement,
+    );
 
     dagExecutor.execute(executableJob, executionId, execution.dagId, originalGoalText, effectiveExecutionConfig).catch((error) => {
       this.logger.error({ err: error, executionId }, 'DAG resume execution failed');

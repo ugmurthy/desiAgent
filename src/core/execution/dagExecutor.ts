@@ -22,6 +22,7 @@ import type { StatsQueue } from '../workers/statsQueue.js';
 import { buildGlobalContext as buildGlobalContextShared, buildInferencePrompt as buildInferencePromptShared } from './contextBuilder.js';
 import { deriveExecutionStatus as deriveExecutionStatusShared, aggregateUsage as aggregateUsageShared, aggregateCost as aggregateCostShared } from './executionAggregates.js';
 import { ExecutionPlanCompiler } from './planCompiler.js';
+import { loadExecutableSkillHandler } from '../skills/executableHandler.js';
 
 
 export interface SubTask {
@@ -97,6 +98,47 @@ export interface ExecutionConfig {
    * Default: 5
    */
   maxParallelism?: number;
+  /**
+   * Maximum retries per task (policy/runtime internal).
+   * Default: 1
+   */
+  maxRetriesPerTask?: number;
+  /**
+   * Retry backoff in milliseconds (policy/runtime internal).
+   * Default: 1000
+   */
+  retryBackoffMs?: number;
+  /**
+   * Timeout per task in milliseconds (policy/runtime internal).
+   * Default: 30000
+   */
+  timeoutMsPerTask?: number;
+  /**
+   * Optional runtime budget caps (policy/runtime internal).
+   */
+  maxExecutionCostUsd?: number;
+  maxExecutionTokens?: number;
+  /**
+   * Enable adaptive concurrency (internal runtime optimization).
+   * Default: true
+   */
+  adaptiveConcurrency?: boolean;
+}
+
+interface RuntimeExecutionConfig extends ExecutionConfig {
+  skipEvents: boolean;
+  batchDbUpdates: boolean;
+  maxParallelism: number;
+  maxRetriesPerTask: number;
+  retryBackoffMs: number;
+  timeoutMsPerTask: number;
+  adaptiveConcurrency: boolean;
+}
+
+interface TaskRuntimePolicy {
+  timeoutMs: number;
+  maxRetries: number;
+  retryBackoffMs: number;
 }
 
 /**
@@ -128,14 +170,6 @@ export interface TaskExecutionResult {
 
 function generateSubStepId(): string {
   return `substep_${nanoid(21)}`;
-}
-
-function chunkTasks<T>(tasks: T[], chunkSize: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < tasks.length; i += chunkSize) {
-    chunks.push(tasks.slice(i, i + chunkSize));
-  }
-  return chunks;
 }
 
 export class DAGExecutor {
@@ -471,6 +505,141 @@ export class DAGExecutor {
     return agentMap;
   }
 
+  private normalizeDependencyIds(dependencies: unknown): string[] {
+    if (!Array.isArray(dependencies)) {
+      return [];
+    }
+    return dependencies.filter((dep): dep is string => typeof dep === 'string' && dep !== 'none');
+  }
+
+  private isCheckpointCompatible(task: SubTask, subStep: any): boolean {
+    if (subStep.toolOrPromptName !== task.tool_or_prompt.name) {
+      return false;
+    }
+
+    if (typeof subStep.actionType === 'string') {
+      const checkpointActionType = subStep.actionType;
+      if (task.action_type === 'skill') {
+        if (checkpointActionType !== 'skill' && checkpointActionType !== 'tool') {
+          return false;
+        }
+      } else if (checkpointActionType !== task.action_type) {
+        return false;
+      }
+    }
+
+    const expectedDependencies = this.normalizeDependencyIds(task.dependencies).sort();
+    const checkpointDependencies = this.normalizeDependencyIds(subStep.dependencies).sort();
+
+    if (expectedDependencies.length !== checkpointDependencies.length) {
+      return false;
+    }
+
+    for (let i = 0; i < expectedDependencies.length; i += 1) {
+      if (expectedDependencies[i] !== checkpointDependencies[i]) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private timestampToNumber(value: unknown): number {
+    if (value instanceof Date) {
+      return value.getTime();
+    }
+    if (typeof value === 'number') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Date.parse(value);
+      return Number.isNaN(parsed) ? 0 : parsed;
+    }
+    return 0;
+  }
+
+  private deserializeCheckpointResult(result: unknown): any {
+    if (typeof result !== 'string') {
+      return result;
+    }
+
+    const trimmed = result.trim();
+    if (!trimmed) {
+      return result;
+    }
+
+    // Sub-step results are often persisted as JSON.stringify(content).
+    // Rehydrate JSON payloads so downstream dependency resolution sees
+    // arrays/objects (for example webSearch -> fetchURLs URL lists).
+    if (!(trimmed.startsWith('{') || trimmed.startsWith('['))) {
+      return result;
+    }
+
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return result;
+    }
+  }
+
+  private async hydrateResumeCheckpoint(
+    job: DecomposerJob,
+    executionId: string,
+  ): Promise<{ taskResults: Map<string, any>; executedTasks: Set<string> }> {
+    const taskResults = new Map<string, any>();
+    const executedTasks = new Set<string>();
+
+    const taskById = new Map(job.sub_tasks.map((task) => [task.id, task]));
+    if (taskById.size === 0) {
+      return { taskResults, executedTasks };
+    }
+
+    const rows = await this.db.query.dagSubSteps.findMany({
+      where: eq(dagSubSteps.executionId, executionId),
+    });
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return { taskResults, executedTasks };
+    }
+
+    const latestByTask = new Map<string, { updatedAt: number; result: any }>();
+
+    for (const row of rows) {
+      if (!row || row.status !== 'completed' || typeof row.taskId !== 'string') {
+        continue;
+      }
+
+      const task = taskById.get(row.taskId);
+      if (!task || !this.isCheckpointCompatible(task, row)) {
+        continue;
+      }
+
+      const updatedAt = Math.max(
+        this.timestampToNumber(row.updatedAt),
+        this.timestampToNumber(row.completedAt),
+        this.timestampToNumber(row.createdAt),
+      );
+      const current = latestByTask.get(row.taskId);
+      if (!current || updatedAt >= current.updatedAt) {
+        latestByTask.set(row.taskId, { updatedAt, result: this.deserializeCheckpointResult(row.result) });
+      }
+    }
+
+    for (const [taskId, snapshot] of latestByTask.entries()) {
+      taskResults.set(taskId, snapshot.result);
+      executedTasks.add(taskId);
+    }
+
+    if (executedTasks.size > 0) {
+      this.logger.info(
+        { executionId, hydratedTasks: executedTasks.size, totalTasks: job.sub_tasks.length },
+        'Hydrated completed task checkpoints for resume',
+      );
+    }
+
+    return { taskResults, executedTasks };
+  }
+
   /**
    * Conditionally emit event based on config
    */
@@ -478,6 +647,147 @@ export class DAGExecutor {
     if (!config.skipEvents) {
       ExecutionsService.emitEvent(event);
     }
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    if (ms <= 0) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async runInTransaction(work: (dbHandle: any) => Promise<void>): Promise<void> {
+    const transactionalDb = this.db as any;
+    if (typeof transactionalDb.transaction === 'function') {
+      await transactionalDb.transaction(async (tx: any) => {
+        await work(tx);
+      });
+      return;
+    }
+
+    await work(this.db);
+  }
+
+  private isNetworkTask(task: SubTask): boolean {
+    if (task.action_type === 'inference' || task.action_type === 'skill') {
+      return true;
+    }
+    return ['webSearch', 'fetchPage', 'fetchURLs', 'sendWebhook'].includes(task.tool_or_prompt.name);
+  }
+
+  private buildTaskRuntimePolicy(task: SubTask, config: RuntimeExecutionConfig): TaskRuntimePolicy {
+    const networkTask = this.isNetworkTask(task);
+
+    let timeoutMs = config.timeoutMsPerTask;
+    if (task.action_type === 'inference') {
+      timeoutMs = Math.round(timeoutMs * 1.7);
+    } else if (task.action_type === 'skill' || networkTask) {
+      timeoutMs = Math.round(timeoutMs * 1.4);
+    }
+
+    const maxRetries = Math.max(0, config.maxRetriesPerTask);
+    const retryBackoffMs = Math.round(config.retryBackoffMs * (networkTask ? 1.5 : 1));
+
+    return {
+      timeoutMs,
+      maxRetries,
+      retryBackoffMs,
+    };
+  }
+
+  private isRetryableError(error: unknown, config: RuntimeExecutionConfig): boolean {
+    if (config.abortSignal?.aborted) {
+      return false;
+    }
+
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+    if (message.includes('tool not found') || message.includes('unknown action type') || message.includes('validation')) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private usageTokens(usage?: TaskExecutionResult['usage']): number {
+    if (!usage) {
+      return 0;
+    }
+    if (typeof usage.totalTokens === 'number') {
+      return usage.totalTokens;
+    }
+    return (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0);
+  }
+
+  private async withTaskTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timeoutHandle = setTimeout(() => reject(new Error(errorMessage)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
+  private async executeTaskWithPolicy(
+    task: SubTask,
+    config: RuntimeExecutionConfig,
+    runner: () => Promise<TaskExecutionResult>,
+  ): Promise<TaskExecutionResult> {
+    const policy = this.buildTaskRuntimePolicy(task, config);
+    let attempt = 0;
+
+    while (true) {
+      attempt += 1;
+
+      try {
+        return await this.withTaskTimeout(
+          runner(),
+          policy.timeoutMs,
+          `Task ${task.id} timed out after ${policy.timeoutMs}ms`,
+        );
+      } catch (error) {
+        const canRetry = attempt <= policy.maxRetries && this.isRetryableError(error, config);
+        if (!canRetry) {
+          throw error;
+        }
+
+        const waitMs = Math.round(policy.retryBackoffMs * Math.pow(2, attempt - 1));
+        this.logger.warn({ taskId: task.id, attempt, waitMs }, 'Retrying task after transient failure');
+        await this.sleep(waitMs);
+      }
+    }
+  }
+
+  private computeAdaptiveParallelism(
+    current: number,
+    maxParallelism: number,
+    batchResults: Array<{ startTime: number; endTime?: number; error?: string }>,
+  ): number {
+    if (maxParallelism <= 1) {
+      return 1;
+    }
+
+    const failures = batchResults.filter((result) => !!result.error).length;
+    const completed = batchResults.filter((result) => typeof result.endTime === 'number');
+    const avgDurationMs = completed.length > 0
+      ? completed.reduce((sum, result) => sum + ((result.endTime ?? Date.now()) - result.startTime), 0) / completed.length
+      : 0;
+
+    if (failures > 0 || avgDurationMs > 20_000) {
+      return Math.max(1, current - 1);
+    }
+
+    if (avgDurationMs > 0 && avgDurationMs < 4_000) {
+      return Math.min(maxParallelism, current + 1);
+    }
+
+    return current;
   }
 
   async execute(
@@ -488,11 +798,17 @@ export class DAGExecutor {
     config: ExecutionConfig = {}
   ): Promise<string> {
     const effectiveOriginalRequest = originalRequest || job.original_request;
-    const execConfig: ExecutionConfig = {
+    const execConfig: RuntimeExecutionConfig = {
       skipEvents: config.skipEvents ?? false,
       batchDbUpdates: config.batchDbUpdates ?? true,
       abortSignal: config.abortSignal,
       maxParallelism: Math.max(1, Math.min(config.maxParallelism ?? 5, 5)),
+      maxRetriesPerTask: Math.max(0, config.maxRetriesPerTask ?? 1),
+      retryBackoffMs: Math.max(250, config.retryBackoffMs ?? 1000),
+      timeoutMsPerTask: Math.max(100, config.timeoutMsPerTask ?? 30_000),
+      maxExecutionCostUsd: config.maxExecutionCostUsd,
+      maxExecutionTokens: config.maxExecutionTokens,
+      adaptiveConcurrency: config.adaptiveConcurrency ?? true,
     };
 
     if (job.clarification_needed) {
@@ -529,15 +845,23 @@ export class DAGExecutor {
         },
       });
 
-      const taskResults = new Map<string, any>();
-      const executedTasks = new Set<string>();
+      const { taskResults, executedTasks } = await this.hydrateResumeCheckpoint(job, execId);
       const globalContext = this.buildGlobalContext(job);
       const compiledPlan = ExecutionPlanCompiler.compile(job.sub_tasks);
+      const llmExecuteTool = new LlmExecuteTool({
+        apiKey: this.apiKey,
+        baseUrl: this.ollamaBaseUrl,
+        skipGenerationStats: this.skipGenerationStats,
+      });
+
+      const runtimeUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      let runtimeCostUsd = 0;
 
       // Track task execution results for batch updates
       interface TaskWaveResult {
         taskId: string;
         startTime: number;
+        endTime?: number;
         result?: TaskExecutionResult;
         error?: string;
       }
@@ -639,8 +963,6 @@ export class DAGExecutor {
             throw new Error(`No agent found with name: ${agentName} (not in pre-fetch cache)`);
           }
 
-          const llmExecuteTool = new LlmExecuteTool({ apiKey: this.apiKey, baseUrl: this.ollamaBaseUrl, skipGenerationStats: this.skipGenerationStats });
-
           const result = await llmExecuteTool.execute({
             provider: agent.provider,
             model: agent.model,
@@ -666,23 +988,12 @@ export class DAGExecutor {
           if (!skillMeta) {
             throw new Error(`Skill not found: ${skillName}`);
           }
-
+          
           if (skillMeta.type === 'executable') {
-            const handlerPath = skillMeta.filePath.replace(/SKILL\.md$/, 'handler.ts');
-            try {
-              const mod = await import(`file://${handlerPath}`);
-              const handler = mod.default || mod.handler;
-              if (!handler) {
-                throw new Error(`Skill "${skillName}" is not executable or missing handler`);
-              }
-              const handlerResult = await handler(task.tool_or_prompt.params || {});
-              return { content: handlerResult };
-            } catch (err) {
-              if (err instanceof Error && err.message.includes('is not executable or missing handler')) {
-                throw err;
-              }
-              throw new Error(`Skill "${skillName}" is not executable or missing handler`);
-            }
+            const { handler, handlerPath } = await loadExecutableSkillHandler(skillName, skillMeta.filePath);
+            this.logger.info(`Executing skill ${skillName}/${skillMeta.type} with handler at ${handlerPath}`);
+            const handlerResult = await handler(task.tool_or_prompt.params || {});
+            return { content: handlerResult };
           }
 
           // Context skill: load content and run via LlmExecuteTool
@@ -709,8 +1020,6 @@ export class DAGExecutor {
             }
           }
 
-          const llmExecuteTool = new LlmExecuteTool({ apiKey: this.apiKey, baseUrl: this.ollamaBaseUrl, skipGenerationStats: this.skipGenerationStats });
-
           const result = await llmExecuteTool.execute({
             provider: skillProvider,
             model: skillModel,
@@ -729,8 +1038,9 @@ export class DAGExecutor {
         throw new Error(`Unknown action type: ${task.action_type}`);
       };
 
-      // Execute tasks in dependency order with wave-based batching
+      // Execute tasks in dependency order with wave-based batching.
       let waveNumber = 0;
+      let adaptiveParallelism = execConfig.maxParallelism;
 
       for (const readyTasksInWave of compiledPlan.waves) {
         waveNumber++;
@@ -741,7 +1051,6 @@ export class DAGExecutor {
         }
 
         const waveStartTime = Date.now();
-        const taskBatches = chunkTasks(readyTasks, execConfig.maxParallelism ?? 5);
 
         this.emitEventIfEnabled(execConfig, {
           type: ExecutionEventType.WaveStarted,
@@ -750,23 +1059,29 @@ export class DAGExecutor {
           data: {
             wave: waveNumber,
             taskIds: readyTasks.map((task) => task.id),
-            parallel: Math.min(readyTasks.length, execConfig.maxParallelism ?? 5),
+            parallel: Math.min(readyTasks.length, adaptiveParallelism),
           },
         });
 
-        for (const taskBatch of taskBatches) {
+        let taskIndex = 0;
+        while (taskIndex < readyTasks.length) {
+          const batchSize = Math.min(adaptiveParallelism, readyTasks.length - taskIndex);
+          const taskBatch = readyTasks.slice(taskIndex, taskIndex + batchSize);
+          taskIndex += batchSize;
           const batchResults: TaskWaveResult[] = [];
 
           if (execConfig.batchDbUpdates && taskBatch.length > 0) {
-            const updatePromises = taskBatch.map((task) =>
-              this.db.update(dagSubSteps)
-                .set({ status: 'running', startedAt: new Date() })
-                .where(and(
-                  eq(dagSubSteps.taskId, task.id),
-                  eq(dagSubSteps.executionId, execId)
-                ))
-            );
-            await Promise.all(updatePromises);
+            await this.runInTransaction(async (dbHandle) => {
+              const updatePromises = taskBatch.map((task) =>
+                dbHandle.update(dagSubSteps)
+                  .set({ status: 'running', startedAt: new Date() })
+                  .where(and(
+                    eq(dagSubSteps.taskId, task.id),
+                    eq(dagSubSteps.executionId, execId)
+                  ))
+              );
+              await Promise.all(updatePromises);
+            });
             this.logger.debug({ batchSize: taskBatch.length }, 'Batch updated tasks to running');
           }
 
@@ -777,7 +1092,8 @@ export class DAGExecutor {
               batchResults.push(waveResult);
 
               try {
-                const execResult = await executeTask(task);
+                const execResult = await this.executeTaskWithPolicy(task, execConfig, () => executeTask(task));
+                waveResult.endTime = Date.now();
                 taskResults.set(task.id, execResult.content);
                 executedTasks.add(task.id);
                 waveResult.result = execResult;
@@ -793,7 +1109,7 @@ export class DAGExecutor {
                     status: 'completed',
                     result: serializedResult,
                     completedAt: new Date(),
-                    durationMs: Date.now() - taskExecStartTime,
+                    durationMs: (waveResult.endTime ?? Date.now()) - taskExecStartTime,
                     usage: execResult.usage,
                     generationId: execResult.generationId,
                     costUsd: execResult.costUsd?.toString(),
@@ -814,25 +1130,28 @@ export class DAGExecutor {
                   ts: Date.now(),
                   data: {
                     taskId: task.id,
-                    durationMs: Date.now() - taskExecStartTime,
+                    durationMs: (waveResult.endTime ?? Date.now()) - taskExecStartTime,
                   },
                 });
               } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 this.logger.error({ err: errorMessage, taskId: task.id }, `Task ${task.id} failed`);
                 waveResult.error = errorMessage;
+                waveResult.endTime = Date.now();
 
-                await this.db.update(dagSubSteps)
-                  .set({
-                    status: 'failed',
-                    error: errorMessage,
-                    completedAt: new Date(),
-                    durationMs: Date.now() - taskExecStartTime,
-                  })
-                  .where(and(
-                    eq(dagSubSteps.taskId, task.id),
-                    eq(dagSubSteps.executionId, execId)
-                  ));
+                if (!execConfig.batchDbUpdates) {
+                  await this.db.update(dagSubSteps)
+                    .set({
+                      status: 'failed',
+                      error: errorMessage,
+                      completedAt: new Date(),
+                      durationMs: (waveResult.endTime ?? Date.now()) - taskExecStartTime,
+                    })
+                    .where(and(
+                      eq(dagSubSteps.taskId, task.id),
+                      eq(dagSubSteps.executionId, execId)
+                    ));
+                }
 
                 this.emitEventIfEnabled(execConfig, {
                   type: ExecutionEventType.TaskFailed,
@@ -840,7 +1159,7 @@ export class DAGExecutor {
                   ts: Date.now(),
                   data: {
                     taskId: task.id,
-                    durationMs: Date.now() - taskExecStartTime,
+                    durationMs: (waveResult.endTime ?? Date.now()) - taskExecStartTime,
                   },
                   error: {
                     message: errorMessage,
@@ -853,38 +1172,64 @@ export class DAGExecutor {
           );
 
           if (execConfig.batchDbUpdates) {
-            const completedResults = batchResults.filter((result) => result.result && !result.error);
-            if (completedResults.length > 0) {
-              const batchUpdatePromises = completedResults.map((result) => {
-                const serializedResult = typeof result.result!.content === 'string'
-                  ? result.result!.content
-                  : JSON.stringify(result.result!.content);
+            await this.runInTransaction(async (dbHandle) => {
+              const batchUpdatePromises = batchResults.map((result) => {
+                if (result.result && !result.error) {
+                  const serializedResult = typeof result.result.content === 'string'
+                    ? result.result.content
+                    : JSON.stringify(result.result.content);
 
-                const batchUpdate: Record<string, any> = {
-                  status: 'completed',
-                  result: serializedResult,
-                  completedAt: new Date(),
-                  durationMs: Date.now() - result.startTime,
-                  usage: result.result!.usage,
-                  generationId: result.result!.generationId,
-                  costUsd: result.result!.costUsd?.toString(),
-                  generationStats: result.result!.generationStats,
-                };
+                  const batchUpdate: Record<string, any> = {
+                    status: 'completed',
+                    result: serializedResult,
+                    completedAt: new Date(),
+                    durationMs: (result.endTime ?? Date.now()) - result.startTime,
+                    usage: result.result.usage,
+                    generationId: result.result.generationId,
+                    costUsd: result.result.costUsd?.toString(),
+                    generationStats: result.result.generationStats,
+                  };
 
-                return this.db.update(dagSubSteps)
-                  .set(batchUpdate)
-                  .where(and(
-                    eq(dagSubSteps.taskId, result.taskId),
-                    eq(dagSubSteps.executionId, execId)
-                  ));
+                  return dbHandle.update(dagSubSteps)
+                    .set(batchUpdate)
+                    .where(and(
+                      eq(dagSubSteps.taskId, result.taskId),
+                      eq(dagSubSteps.executionId, execId)
+                    ));
+                }
+
+                if (result.error) {
+                  return dbHandle.update(dagSubSteps)
+                    .set({
+                      status: 'failed',
+                      error: result.error,
+                      completedAt: new Date(),
+                      durationMs: (result.endTime ?? Date.now()) - result.startTime,
+                    })
+                    .where(and(
+                      eq(dagSubSteps.taskId, result.taskId),
+                      eq(dagSubSteps.executionId, execId)
+                    ));
+                }
+
+                return Promise.resolve();
               });
 
               await Promise.all(batchUpdatePromises);
-              this.logger.debug({
-                batchSize: completedResults.length,
-                waveDurationMs: Date.now() - waveStartTime,
-              }, 'Batch updated completed tasks');
-            }
+            });
+
+            this.logger.debug({
+              batchSize: batchResults.length,
+              waveDurationMs: Date.now() - waveStartTime,
+            }, 'Batch updated task outcomes');
+          }
+
+          for (const result of batchResults) {
+            const usage = result.result?.usage;
+            runtimeUsage.promptTokens += usage?.promptTokens ?? 0;
+            runtimeUsage.completionTokens += usage?.completionTokens ?? 0;
+            runtimeUsage.totalTokens += this.usageTokens(usage);
+            runtimeCostUsd += result.result?.costUsd ?? 0;
           }
 
           const batchFailure = batchExecutionResults.find(
@@ -894,6 +1239,24 @@ export class DAGExecutor {
             throw batchFailure.reason instanceof Error
               ? batchFailure.reason
               : new Error(String(batchFailure.reason));
+          }
+
+          if (typeof execConfig.maxExecutionTokens === 'number' && runtimeUsage.totalTokens > execConfig.maxExecutionTokens) {
+            throw new Error(`Execution token budget exceeded: ${runtimeUsage.totalTokens} > ${execConfig.maxExecutionTokens}`);
+          }
+
+          if (typeof execConfig.maxExecutionCostUsd === 'number' && runtimeCostUsd > execConfig.maxExecutionCostUsd) {
+            throw new Error(
+              `Execution cost budget exceeded: ${runtimeCostUsd.toFixed(4)} > ${execConfig.maxExecutionCostUsd.toFixed(4)}`,
+            );
+          }
+
+          if (execConfig.adaptiveConcurrency) {
+            adaptiveParallelism = this.computeAdaptiveParallelism(
+              adaptiveParallelism,
+              execConfig.maxParallelism,
+              batchResults,
+            );
           }
         }
 
@@ -930,6 +1293,21 @@ export class DAGExecutor {
         execId,
         execConfig.abortSignal
       );
+
+      runtimeUsage.promptTokens += synthesisResult.usage?.promptTokens ?? 0;
+      runtimeUsage.completionTokens += synthesisResult.usage?.completionTokens ?? 0;
+      runtimeUsage.totalTokens += this.usageTokens(synthesisResult.usage);
+      runtimeCostUsd += synthesisResult.costUsd ?? 0;
+
+      if (typeof execConfig.maxExecutionTokens === 'number' && runtimeUsage.totalTokens > execConfig.maxExecutionTokens) {
+        throw new Error(`Execution token budget exceeded after synthesis: ${runtimeUsage.totalTokens} > ${execConfig.maxExecutionTokens}`);
+      }
+
+      if (typeof execConfig.maxExecutionCostUsd === 'number' && runtimeCostUsd > execConfig.maxExecutionCostUsd) {
+        throw new Error(
+          `Execution cost budget exceeded after synthesis: ${runtimeCostUsd.toFixed(4)} > ${execConfig.maxExecutionCostUsd.toFixed(4)}`,
+        );
+      }
 
       this.emitEventIfEnabled(execConfig, {
         type: ExecutionEventType.SynthesisCompleted,

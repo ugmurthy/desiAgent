@@ -567,6 +567,205 @@ describe('DAGExecutor', () => {
       expect(mockTool.execute).toHaveBeenCalled();
     });
 
+    it('hydrates completed sub-steps and skips re-running checkpointed tasks on resume', async () => {
+      const updateSet = vi.fn(() => ({ where: vi.fn() }));
+      const insertValues = vi.fn();
+      const checkpointQuery = vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            taskId: '1',
+            status: 'completed',
+            result: 'cached result',
+            actionType: 'tool',
+            toolOrPromptName: 'firstTool',
+            dependencies: [],
+            updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          },
+          {
+            taskId: '2',
+            status: 'pending',
+            result: null,
+            actionType: 'tool',
+            toolOrPromptName: 'secondTool',
+            dependencies: ['1'],
+            updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          },
+        ])
+        .mockResolvedValueOnce([{ status: 'completed' }, { status: 'completed' }]);
+
+      config.db.update = vi.fn(() => ({ set: updateSet }));
+      config.db.insert = vi.fn(() => ({ values: insertValues }));
+      config.db.query.agents.findFirst = vi.fn().mockResolvedValue(null);
+      config.db.query.dagSubSteps = { findMany: checkpointQuery };
+
+      const firstTool = {
+        name: 'firstTool',
+        description: 'first',
+        inputSchema: { parse: (v: any) => v },
+        execute: vi.fn().mockResolvedValue('first result should not be used'),
+        restricted: false,
+      };
+
+      const secondTool = {
+        name: 'secondTool',
+        description: 'second',
+        inputSchema: { parse: (v: any) => v },
+        execute: vi.fn().mockResolvedValue('second result'),
+        restricted: false,
+      };
+
+      config.toolRegistry.register(firstTool as any);
+      config.toolRegistry.register(secondTool as any);
+      executor = new DAGExecutor(config);
+
+      const job = makeJob({
+        sub_tasks: [
+          makeSubTask({
+            id: '1',
+            action_type: 'tool',
+            tool_or_prompt: { name: 'firstTool', params: { input: 'a' } },
+            dependencies: [],
+          }),
+          makeSubTask({
+            id: '2',
+            action_type: 'tool',
+            tool_or_prompt: { name: 'secondTool', params: { input: '<Result from Task 1>' } },
+            dependencies: ['1'],
+          }),
+        ],
+      });
+
+      await expect(executor.execute(job, 'exec_resume_checkpoint', undefined, undefined, { skipEvents: true })).resolves.toBeTypeOf('string');
+
+      expect(firstTool.execute).not.toHaveBeenCalled();
+      expect(secondTool.execute).toHaveBeenCalledWith(
+        expect.objectContaining({ input: 'cached result' }),
+        expect.anything(),
+      );
+      expect(checkpointQuery).toHaveBeenCalledTimes(2);
+    });
+
+    it('rehydrates JSON checkpoint results so fetchURLs receives structured URL arrays', async () => {
+      const updateSet = vi.fn(() => ({ where: vi.fn() }));
+      const insertValues = vi.fn();
+      const checkpointQuery = vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            taskId: '001',
+            status: 'completed',
+            result: JSON.stringify([
+              { url: 'https://example.com/a', snippet: 'Growth reached 45.5% YoY' },
+              { url: 'https://example.com/b', snippet: 'Share moved to 33.6%' },
+            ]),
+            actionType: 'tool',
+            toolOrPromptName: 'webSearch',
+            dependencies: [],
+            updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          },
+          {
+            taskId: '002',
+            status: 'pending',
+            result: null,
+            actionType: 'tool',
+            toolOrPromptName: 'fetchURLs',
+            dependencies: ['001'],
+            updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          },
+        ])
+        .mockResolvedValueOnce([{ status: 'completed' }, { status: 'completed' }]);
+
+      config.db.update = vi.fn(() => ({ set: updateSet }));
+      config.db.insert = vi.fn(() => ({ values: insertValues }));
+      config.db.query.agents.findFirst = vi.fn().mockResolvedValue(null);
+      config.db.query.dagSubSteps = { findMany: checkpointQuery };
+
+      const webSearchTool = {
+        name: 'webSearch',
+        description: 'search',
+        inputSchema: { parse: (v: any) => v },
+        execute: vi.fn().mockResolvedValue('should not run'),
+        restricted: false,
+      };
+
+      const fetchURLsTool = {
+        name: 'fetchURLs',
+        description: 'fetch pages',
+        inputSchema: { parse: (v: any) => v },
+        execute: vi.fn().mockResolvedValue([{ url: 'https://example.com/a' }]),
+        restricted: false,
+      };
+
+      config.toolRegistry.register(webSearchTool as any);
+      config.toolRegistry.register(fetchURLsTool as any);
+      executor = new DAGExecutor(config);
+
+      const job = makeJob({
+        sub_tasks: [
+          makeSubTask({
+            id: '001',
+            action_type: 'tool',
+            tool_or_prompt: { name: 'webSearch', params: { query: 'market size' } },
+            dependencies: [],
+          }),
+          makeSubTask({
+            id: '002',
+            action_type: 'tool',
+            tool_or_prompt: { name: 'fetchURLs', params: { urls: ['<Result from Task 001>'] } },
+            dependencies: ['001'],
+          }),
+        ],
+      });
+
+      await expect(executor.execute(job, 'exec_resume_fetchurls', undefined, undefined, { skipEvents: true })).resolves.toBeTypeOf('string');
+
+      expect(webSearchTool.execute).not.toHaveBeenCalled();
+      expect(fetchURLsTool.execute).toHaveBeenCalledWith(
+        expect.objectContaining({ urls: ['https://example.com/a', 'https://example.com/b'] }),
+        expect.anything(),
+      );
+    });
+
+    it('treats completed skill checkpoints as reusable and does not re-run them', async () => {
+      const updateSet = vi.fn(() => ({ where: vi.fn() }));
+      const insertValues = vi.fn();
+      const checkpointQuery = vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            taskId: '003',
+            status: 'completed',
+            result: 'cached skill output',
+            actionType: 'skill',
+            toolOrPromptName: 'monteCarloSkill',
+            dependencies: [],
+            updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          },
+        ])
+        .mockResolvedValueOnce([{ status: 'completed' }]);
+
+      config.db.update = vi.fn(() => ({ set: updateSet }));
+      config.db.insert = vi.fn(() => ({ values: insertValues }));
+      config.db.query.agents.findFirst = vi.fn().mockResolvedValue(null);
+      config.db.query.dagSubSteps = { findMany: checkpointQuery };
+
+      executor = new DAGExecutor(config);
+
+      const job = makeJob({
+        sub_tasks: [
+          makeSubTask({
+            id: '003',
+            action_type: 'skill',
+            tool_or_prompt: { name: 'monteCarloSkill', params: { sampleCount: 5000 } },
+            dependencies: [],
+          }),
+        ],
+      });
+
+      await expect(executor.execute(job, 'exec_resume_skill', undefined, undefined, { skipEvents: true })).resolves.toBeTypeOf('string');
+    });
+
     it('detects deadlock with unresolvable dependencies', async () => {
       const updateSet = vi.fn(() => ({ where: vi.fn() }));
       config.db.update = vi.fn(() => ({ set: updateSet }));
@@ -605,6 +804,141 @@ describe('DAGExecutor', () => {
       await expect(
         executor.execute(job, 'exec_unknown', undefined, undefined, { skipEvents: true })
       ).rejects.toThrow('Tool not found: nonexistentTool');
+    });
+
+    it('retries transient failures for non-side-effect tasks', async () => {
+      const updateSet = vi.fn(() => ({ where: vi.fn() }));
+      const insertValues = vi.fn();
+      config.db.update = vi.fn(() => ({ set: updateSet }));
+      config.db.insert = vi.fn(() => ({ values: insertValues }));
+      config.db.query.agents.findFirst = vi.fn().mockResolvedValue(null);
+      config.db.query.dagSubSteps = { findMany: vi.fn().mockResolvedValue([{ status: 'completed' }]) };
+
+      const flakyTool = {
+        name: 'flakyTool',
+        description: 'flaky',
+        inputSchema: { parse: (v: any) => v },
+        execute: vi.fn().mockRejectedValueOnce(new Error('temporary network issue')).mockResolvedValue('ok after retry'),
+        restricted: false,
+      };
+      config.toolRegistry.register(flakyTool as any);
+      executor = new DAGExecutor(config);
+
+      const job = makeJob({
+        sub_tasks: [
+          makeSubTask({
+            id: '1',
+            action_type: 'tool',
+            tool_or_prompt: { name: 'flakyTool', params: { input: 'test' } },
+            dependencies: [],
+          }),
+        ],
+      });
+
+      await expect(
+        executor.execute(job, 'exec_retry', undefined, undefined, {
+          skipEvents: true,
+          maxRetriesPerTask: 1,
+          retryBackoffMs: 1,
+        })
+      ).resolves.toBeTypeOf('string');
+
+      expect(flakyTool.execute).toHaveBeenCalledTimes(2);
+    });
+
+    it('respects retry limits for side-effect tasks', async () => {
+      const updateSet = vi.fn(() => ({ where: vi.fn() }));
+      const insertValues = vi.fn();
+      config.db.update = vi.fn(() => ({ set: updateSet }));
+      config.db.insert = vi.fn(() => ({ values: insertValues }));
+      config.db.query.agents.findFirst = vi.fn().mockResolvedValue(null);
+      config.db.query.dagSubSteps = { findMany: vi.fn().mockResolvedValue([{ status: 'completed' }]) };
+
+      const writeFileMock = {
+        name: 'writeFile',
+        description: 'write',
+        inputSchema: { parse: (v: any) => v },
+        execute: vi.fn().mockRejectedValueOnce(new Error('disk unavailable')).mockResolvedValue('ok on retry'),
+        restricted: false,
+      };
+      config.toolRegistry.register(writeFileMock as any);
+      executor = new DAGExecutor(config);
+
+      const job = makeJob({
+        sub_tasks: [
+          makeSubTask({
+            id: '1',
+            action_type: 'tool',
+            tool_or_prompt: { name: 'writeFile', params: { path: 'x.txt', content: 'x' } },
+            dependencies: [],
+          }),
+        ],
+      });
+
+      await expect(
+        executor.execute(job, 'exec_no_retry', undefined, undefined, {
+          skipEvents: true,
+          maxRetriesPerTask: 1,
+          retryBackoffMs: 1,
+        })
+      ).resolves.toBeTypeOf('string');
+
+      expect(writeFileMock.execute).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails fast when task timeout is exceeded', async () => {
+      const updateSet = vi.fn(() => ({ where: vi.fn() }));
+      config.db.update = vi.fn(() => ({ set: updateSet }));
+      config.db.query.agents.findFirst = vi.fn().mockResolvedValue(null);
+
+      const slowTool = {
+        name: 'slowTool',
+        description: 'slow',
+        inputSchema: { parse: (v: any) => v },
+        execute: vi.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          return 'too late';
+        }),
+        restricted: false,
+      };
+      config.toolRegistry.register(slowTool as any);
+      executor = new DAGExecutor(config);
+
+      const job = makeJob({
+        sub_tasks: [
+          makeSubTask({
+            id: '1',
+            action_type: 'tool',
+            tool_or_prompt: { name: 'slowTool', params: { input: 'test' } },
+            dependencies: [],
+          }),
+        ],
+      });
+
+      await expect(
+        executor.execute(job, 'exec_timeout', undefined, undefined, {
+          skipEvents: true,
+          maxRetriesPerTask: 0,
+          timeoutMsPerTask: 10,
+        })
+      ).rejects.toThrow('timed out');
+    });
+  });
+
+  describe('adaptive concurrency helper', () => {
+    it('decreases concurrency on failures', () => {
+      const next = (executor as any).computeAdaptiveParallelism(4, 5, [
+        { startTime: 0, endTime: 1000, error: 'failed' },
+      ]);
+      expect(next).toBe(3);
+    });
+
+    it('increases concurrency on fast successful batches', () => {
+      const next = (executor as any).computeAdaptiveParallelism(2, 5, [
+        { startTime: 0, endTime: 500 },
+        { startTime: 0, endTime: 700 },
+      ]);
+      expect(next).toBe(3);
     });
   });
 
