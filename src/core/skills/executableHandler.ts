@@ -10,6 +10,7 @@ const EXECUTABLE_HANDLER_CANDIDATES = [
   'handler.cjs',
   'handler.mts',
   'handler.cts',
+  'handler.ts',
 ] as const;
 
 async function fileExists(filePath: string): Promise<boolean> {
