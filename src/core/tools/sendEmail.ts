@@ -84,15 +84,32 @@ export class SendEmailTool extends BaseTool<any, SendEmailOutput> {
     return this.transporter;
   }
 
-  private normalizeEmailList(emails: string | string[] | undefined): string | undefined {
-    if (!emails) return undefined;
+  private normalizeEmailList(emails: string | string[] | null | undefined): string | undefined {
+    if (emails == null) return undefined;
     if (Array.isArray(emails)) {
-      return emails.join(', ');
+      const valid = emails.filter((e) => typeof e === 'string' && e.trim().length > 0);
+      return valid.length > 0 ? valid.join(', ') : undefined;
     }
-    return emails;
+    return typeof emails === 'string' && emails.trim().length > 0 ? emails : undefined;
   }
 
   async execute(input: SendEmailInput, ctx: ToolContext): Promise<SendEmailOutput> {
+    // Guard against null/undefined required params (LLM may pass nulls at runtime)
+    const nullKeys = (['to', 'subject', 'body'] as const).filter(
+      (k) => input[k] == null
+    );
+    if (nullKeys.length > 0) {
+      const msg = `Null params received for required fields: ${nullKeys.join(', ')}`;
+      ctx.logger.warn(msg);
+      ctx.emitEvent?.completed?.(`⚠️ ${msg}`);
+      return {
+        success: false,
+        to: input.to ?? '',
+        subject: input.subject ?? '',
+        error: msg,
+      };
+    }
+
     ctx.logger.info(`Sending email to: ${input.to}`);
 
     try {

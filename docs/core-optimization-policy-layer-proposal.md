@@ -234,6 +234,7 @@ interface PolicyDecision {
 1. Policy artifacts are persisted for both allow and deny outcomes, and integration tests validate this end-to-end.
 1. `execute/resume` now handle all policy outcomes safely (`allow`, `deny`, `needs_clarification`, `rewrite`) without API signature changes.
 1. Phase 2 runtime work is now implemented: wave-level batched persistence uses transactions when available (with safe fallback), policy directives are wired into executor runtime config, adaptive concurrency is enabled, and retry/timeout handling is standardized by task class.
+1. Phase 3 governance work is now implemented: configurable policy thresholds are available via config/env, strict policy mode is supported with explicit side-effect approval gates, and policy rule-pack metadata plus repository audit queries are persisted for diagnostics/dashboards.
 
 ## Phase 1 (Policy layer foundation)
 

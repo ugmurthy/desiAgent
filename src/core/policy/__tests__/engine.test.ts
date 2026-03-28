@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LenientPolicyEngine } from '../engine.js';
+import { DEFAULT_POLICY_THRESHOLDS, DefaultPolicyEngine, LenientPolicyEngine } from '../engine.js';
 import { ToolRegistry } from '../../tools/registry.js';
 
 function baseJob(overrides: Record<string, any> = {}): any {
@@ -23,11 +23,11 @@ describe('LenientPolicyEngine', () => {
       sub_tasks: [
         {
           id: '001',
-          description: 'search',
-          thought: 'find data',
+          description: 'inspect workspace',
+          thought: 'use a low-cost local tool',
           action_type: 'tool',
-          tool_or_prompt: { name: 'webSearch', params: { query: 'x' } },
-          expected_output: 'urls',
+          tool_or_prompt: { name: 'bash', params: { command: 'pwd' } },
+          expected_output: 'current directory',
           dependencies: [],
         },
       ],
@@ -38,6 +38,27 @@ describe('LenientPolicyEngine', () => {
     expect(decision.directives.maxParallelism).toBe(5);
     expect(decision.directives.maxExecutionTokens).toBeGreaterThan(0);
     expect(decision.directives.maxExecutionCostUsd).toBeGreaterThan(0);
+  });
+
+  it('denies default network plans that exceed the current hard token budget', () => {
+    const engine = new LenientPolicyEngine(new ToolRegistry(), 5);
+    const decision = engine.evaluate(baseJob({
+      sub_tasks: [
+        {
+          id: '001',
+          description: 'search',
+          thought: 'find data',
+          action_type: 'tool',
+          tool_or_prompt: { name: 'webSearch', params: { query: 'x' } },
+          expected_output: 'urls',
+          dependencies: [],
+        },
+      ],
+    }));
+
+    expect(decision.outcome).toBe('deny');
+    expect(decision.directives.maxExecutionTokens).toBe(DEFAULT_POLICY_THRESHOLDS.hardTokenBudget);
+    expect(decision.violations.some((violation) => violation.code === 'BUDGET_EXCEEDS_HARD_LIMIT')).toBe(true);
   });
 
   it('denies plans with unknown tools', () => {
@@ -152,6 +173,108 @@ describe('LenientPolicyEngine', () => {
     }));
 
     const decision = engine.evaluate(baseJob({ sub_tasks: manyInferenceTasks }));
+
+    expect(decision.outcome).toBe('deny');
+    expect(decision.violations.some((violation) => violation.code === 'BUDGET_EXCEEDS_HARD_LIMIT')).toBe(true);
+  });
+});
+
+describe('DefaultPolicyEngine strict/configurable mode', () => {
+  it('denies medium-severity plans in strict mode', () => {
+    const engine = new DefaultPolicyEngine(new ToolRegistry(), { mode: 'strict' });
+
+    const decision = engine.evaluate(baseJob({
+      sub_tasks: [
+        {
+          id: '001',
+          description: 'write first file',
+          thought: 'first write',
+          action_type: 'tool',
+          tool_or_prompt: { name: 'writeFile', params: { path: 'a.txt', content: 'a' } },
+          expected_output: 'written',
+          dependencies: [],
+        },
+        {
+          id: '002',
+          description: 'write second file',
+          thought: 'second write',
+          action_type: 'tool',
+          tool_or_prompt: { name: 'writeFile', params: { path: 'b.txt', content: 'b' } },
+          expected_output: 'written',
+          dependencies: [],
+        },
+      ],
+    }));
+
+    expect(decision.outcome).toBe('deny');
+    expect(decision.mode).toBe('strict');
+  });
+
+  it('requires side-effect approval in strict mode', () => {
+    const engine = new DefaultPolicyEngine(new ToolRegistry(), { mode: 'strict' });
+
+    const decision = engine.evaluate(baseJob({
+      sub_tasks: [
+        {
+          id: '001',
+          description: 'write file',
+          thought: 'prepare draft',
+          action_type: 'tool',
+          tool_or_prompt: { name: 'writeFile', params: { path: 'draft.txt', content: 'hello' } },
+          expected_output: 'written',
+          dependencies: ['none'],
+        },
+      ],
+    }));
+
+    expect(decision.outcome).toBe('needs_clarification');
+    expect(decision.violations.some((violation) => violation.code === 'STRICT_MODE_SIDE_EFFECT_APPROVAL_REQUIRED')).toBe(true);
+  });
+
+  it('allows strict side effects when approval is provided', () => {
+    const engine = new DefaultPolicyEngine(new ToolRegistry(), { mode: 'strict' });
+
+    const decision = engine.evaluate(baseJob({
+      sub_tasks: [
+        {
+          id: '001',
+          description: 'write file',
+          thought: 'prepare draft',
+          action_type: 'tool',
+          tool_or_prompt: { name: 'writeFile', params: { path: 'draft.txt', content: 'hello' } },
+          expected_output: 'written',
+          dependencies: ['none'],
+        },
+      ],
+    }), { sideEffectApproval: true });
+
+    expect(decision.outcome).toBe('allow');
+  });
+
+  it('applies configured budget thresholds', () => {
+    const engine = new DefaultPolicyEngine(new ToolRegistry(), {
+      mode: 'lenient',
+      thresholds: {
+        softTokenBudget: 800,
+        hardTokenBudget: 1200,
+        softCostBudgetUsd: 0.001,
+        hardCostBudgetUsd: 0.002,
+      },
+    });
+
+    const decision = engine.evaluate(baseJob({
+      sub_tasks: [
+        {
+          id: '001',
+          description: 'single inference',
+          thought: 'heavy enough for threshold',
+          action_type: 'inference',
+          tool_or_prompt: { name: 'inference', params: { prompt: 'summarize' } },
+          expected_output: 'summary',
+          dependencies: [],
+        },
+      ],
+    }));
 
     expect(decision.outcome).toBe('deny');
     expect(decision.violations.some((violation) => violation.code === 'BUDGET_EXCEEDS_HARD_LIMIT')).toBe(true);

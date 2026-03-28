@@ -12,6 +12,8 @@ import type { Agent, ToolDefinition } from './agent.js';
 import type { SkillMeta } from '../core/skills/registry.js';
 import type { ExecutionConfig } from '../core/execution/dagExecutor.js';
 import type { PolicyEnforcement } from './config.js';
+import type { PolicyArtifactFilter, PolicyAuditSummary } from '../core/policy/policyRepository.js';
+import type { PolicyArtifact } from '../db/schema.js';
 
 /**
  * Agents service interface
@@ -103,12 +105,25 @@ export interface DAGsService {
   resumeFromClarification(dagId: string, userResponse: string): Promise<DAGPlanningResult>;
   execute(
     dagId: string,
-    options?: { provider?: string; model?: string; policyEnforcement?: PolicyEnforcement; executionConfig?: ExecutionConfig }
+    options?: {
+      provider?: string;
+      model?: string;
+      policyEnforcement?: PolicyEnforcement;
+      sideEffectApproval?: boolean;
+      executionConfig?: ExecutionConfig;
+    }
   ): Promise<{ id: string; status: string }>;
   resume(
     executionId: string,
-    options?: ExecutionConfig | { executionConfig?: ExecutionConfig; policyEnforcement?: PolicyEnforcement }
+    options?: ExecutionConfig | {
+      executionConfig?: ExecutionConfig;
+      policyEnforcement?: PolicyEnforcement;
+      sideEffectApproval?: boolean;
+    }
   ): Promise<{ id: string; status: string; retryCount: number }>;
+  getPolicyArtifact(id: string): Promise<PolicyArtifact | null>;
+  listPolicyArtifacts(filter?: PolicyArtifactFilter): Promise<PolicyArtifact[]>;
+  summarizePolicyArtifacts(filter?: Omit<PolicyArtifactFilter, 'limit' | 'offset'>): Promise<PolicyAuditSummary>;
   redoInference(
     executionId: string,
     params?: { provider?: 'openai' | 'openrouter' | 'ollama'; model?: string }
@@ -116,6 +131,8 @@ export interface DAGsService {
   get(id: string): Promise<DAG>;
   list(filter?: DAGFilter): Promise<DAG[]>;
   listScheduled(): Promise<ScheduledDAGInfo[]>;
+  activateSchedule(id: string): Promise<DAG>;
+  deactivateSchedule(id: string): Promise<DAG>;
   update(id: string, updates: Partial<{
     status: string;
     result: any;

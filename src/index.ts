@@ -32,6 +32,9 @@ import { SkillRegistry } from './core/skills/registry.js';
 import { StatsQueue } from './core/workers/statsQueue.js';
 import { NodeCronDagScheduler } from './core/execution/dagScheduler.js';
 
+/** Module-level map so only one StatsQueue worker is spawned per database file. */
+const activeStatsQueues = new Map<string, StatsQueue>();
+
 function detectImageMime(buf: Buffer): string | null {
   if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
   if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
@@ -152,7 +155,15 @@ class DesiAgentClientImpl implements DesiAgentClient {
       this.logger.warn('Shutting down in-memory database — all data will be lost');
     }
     this.dagScheduler?.stopAll();
-    await this.statsQueue?.terminate();
+    if (this.statsQueue) {
+      await this.statsQueue.terminate();
+      for (const [path, queue] of activeStatsQueues) {
+        if (queue === this.statsQueue) {
+          activeStatsQueues.delete(path);
+          break;
+        }
+      }
+    }
     this.logger.info('Shutting down desiAgent');
     closeDatabase();
   }
@@ -253,15 +264,22 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       skipGenerationStats: resolved.skipGenerationStats,
     });
 
-    // Initialize background stats worker for OpenRouter
+    // Initialize background stats worker for OpenRouter (singleton per DB path)
     let statsQueue: StatsQueue | undefined;
     if (resolved.llmProvider === 'openrouter' && !resolved.skipGenerationStats && resolved.apiKey) {
-      statsQueue = new StatsQueue(resolved.databasePath, resolved.apiKey, {
-        reconcileIntervalMs: resolved.statsReconcileIntervalMs,
-        reconcileBatchSize: resolved.statsReconcileBatchSize,
-      });
-      statsQueue.start();
-      logger.info('Background stats worker started for OpenRouter');
+      const existing = activeStatsQueues.get(resolved.databasePath);
+      if (existing) {
+        statsQueue = existing;
+        logger.info('Reusing existing background stats worker for OpenRouter');
+      } else {
+        statsQueue = new StatsQueue(resolved.databasePath, resolved.apiKey, {
+          reconcileIntervalMs: resolved.statsReconcileIntervalMs,
+          reconcileBatchSize: resolved.statsReconcileBatchSize,
+        });
+        statsQueue.start();
+        activeStatsQueues.set(resolved.databasePath, statsQueue);
+        logger.info('Background stats worker started for OpenRouter');
+      }
     }
 
     // Initialize DAG scheduler and DAGs service
@@ -284,6 +302,10 @@ export async function setupDesiAgent(config: DesiAgentConfig): Promise<DesiAgent
       imap: resolved.imap,
       staleExecutionMinutes: resolved.staleExecutionMinutes,
       policyEnforcement: resolved.policyEnforcement,
+      policyMode: resolved.policyMode,
+      policyRulePackId: resolved.policyRulePackId,
+      policyRulePackVersion: resolved.policyRulePackVersion,
+      policyThresholds: resolved.policyThresholds,
       apiKey: resolved.apiKey,
       ollamaBaseUrl: resolved.ollamaBaseUrl,
       skipGenerationStats: resolved.skipGenerationStats,
@@ -357,7 +379,14 @@ function validateConfig(config: DesiAgentConfig): z.infer<typeof DesiAgentConfig
 }
 
 // Export all public types and errors
-export type { DesiAgentConfig, ProcessedDesiAgentConfig, ResolvedConfig, PolicyEnforcement } from './types/config.js';
+export type {
+  DesiAgentConfig,
+  ProcessedDesiAgentConfig,
+  ResolvedConfig,
+  PolicyEnforcement,
+  PolicyMode,
+  PolicyThresholdConfig,
+} from './types/config.js';
 export { DesiAgentConfigSchema, resolveConfig } from './types/config.js';
 export type { DesiAgentClient } from './types/index.js';
 export {
@@ -433,6 +462,27 @@ export { AgentsService } from './core/execution/agents.js';
 export { ToolsService } from './core/execution/tools.js';
 export { SkillsService } from './core/execution/skills.js';
 export { ArtifactsService } from './core/execution/artifacts.js';
+export {
+  PolicyRepository,
+  type PolicyArtifactFilter,
+  type PolicyAuditSummary,
+} from './core/policy/policyRepository.js';
+export {
+  DefaultPolicyEngine,
+  LenientPolicyEngine,
+  StrictPolicyEngine,
+  DEFAULT_POLICY_RULE_PACK,
+  DEFAULT_POLICY_THRESHOLDS,
+  type PolicyEngineOptions,
+} from './core/policy/engine.js';
+export type {
+  PolicyOutcome,
+  PolicyViolation,
+  PolicyThresholds,
+  PolicyDecision,
+  PolicyEvaluationContext,
+  PolicyRulePack,
+} from './core/policy/types.js';
 
 // Custom inference
 export {

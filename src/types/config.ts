@@ -13,6 +13,40 @@ export type LLMProvider = 'openai' | 'openrouter' | 'ollama';
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
 
 export type PolicyEnforcement = 'soft' | 'hard';
+export type PolicyMode = 'lenient' | 'strict';
+
+export interface PolicyThresholdConfig {
+  softTokenBudget: number;
+  hardTokenBudget: number;
+  softCostBudgetUsd: number;
+  hardCostBudgetUsd: number;
+  sideEffectDenseTaskCount: number;
+  parallelSideEffectsViolationThreshold: number;
+  sideEffectParallelismCap: number;
+  directiveBudgetHeadroomMultiplier: number;
+}
+
+const DEFAULT_POLICY_THRESHOLDS: PolicyThresholdConfig = Object.freeze({
+  softTokenBudget: 12000,
+  hardTokenBudget: 30000,
+  softCostBudgetUsd: 0.03,
+  hardCostBudgetUsd: 0.1,
+  sideEffectDenseTaskCount: 3,
+  parallelSideEffectsViolationThreshold: 1,
+  sideEffectParallelismCap: 2,
+  directiveBudgetHeadroomMultiplier: 1.25,
+});
+
+const PolicyThresholdsSchema = z.object({
+  softTokenBudget: z.number().int().positive().optional(),
+  hardTokenBudget: z.number().int().positive().optional(),
+  softCostBudgetUsd: z.number().positive().optional(),
+  hardCostBudgetUsd: z.number().positive().optional(),
+  sideEffectDenseTaskCount: z.number().int().positive().optional(),
+  parallelSideEffectsViolationThreshold: z.number().int().min(0).optional(),
+  sideEffectParallelismCap: z.number().int().positive().optional(),
+  directiveBudgetHeadroomMultiplier: z.number().positive().optional(),
+});
 
 /**
  * Zod schema for validating configuration
@@ -51,6 +85,10 @@ export const DesiAgentConfigSchema = z.object({
   // Feature flags
   autoStartScheduler: z.boolean().optional().default(true),
   policyEnforcement: z.enum(['soft', 'hard']).optional().default('hard'),
+  policyMode: z.enum(['lenient', 'strict']).optional().default('lenient'),
+  policyRulePackId: z.string().min(1).optional().default('core'),
+  policyRulePackVersion: z.string().min(1).optional().default('2026.03'),
+  policyThresholds: PolicyThresholdsSchema.optional(),
   enableToolValidation: z.boolean().optional().default(true),
   skipGenerationStats: z.boolean().optional().default(false),
   statsReconcileIntervalMs: z.number().int().positive().optional().default(30_000),
@@ -101,6 +139,10 @@ export interface DesiAgentConfig {
   // Feature flags
   autoStartScheduler?: boolean;
   policyEnforcement?: PolicyEnforcement;
+  policyMode?: PolicyMode;
+  policyRulePackId?: string;
+  policyRulePackVersion?: string;
+  policyThresholds?: Partial<PolicyThresholdConfig>;
   enableToolValidation?: boolean;
   skipGenerationStats?: boolean;
   statsReconcileIntervalMs?: number;
@@ -143,6 +185,10 @@ export interface ResolvedConfig {
   staleExecutionMinutes: number;
   autoStartScheduler: boolean;
   policyEnforcement: PolicyEnforcement;
+  policyMode: PolicyMode;
+  policyRulePackId: string;
+  policyRulePackVersion: string;
+  policyThresholds: PolicyThresholdConfig;
   enableToolValidation: boolean;
   skipGenerationStats: boolean;
   statsReconcileIntervalMs: number;
@@ -153,6 +199,37 @@ export interface ResolvedConfig {
  * Validated and processed configuration after parsing
  */
 export type ProcessedDesiAgentConfig = ResolvedConfig;
+
+function envNumber(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') {
+    return undefined;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function positiveInt(value: number | undefined, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  return fallback;
+}
+
+function nonNegativeInt(value: number | undefined, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return Math.floor(value);
+  }
+  return fallback;
+}
+
+function positiveNumber(value: number | undefined, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  return fallback;
+}
 
 export function resolveConfig(validated: z.infer<typeof DesiAgentConfigSchema>): ResolvedConfig {
   const databasePath = validated.databasePath;
@@ -194,6 +271,66 @@ export function resolveConfig(validated: z.infer<typeof DesiAgentConfigSchema>):
     10
   );
 
+  const requestedPolicyThresholds = validated.policyThresholds || {};
+  const softTokenBudget = positiveInt(
+    envNumber('POLICY_SOFT_TOKEN_BUDGET') ?? requestedPolicyThresholds.softTokenBudget,
+    DEFAULT_POLICY_THRESHOLDS.softTokenBudget,
+  );
+  const hardTokenBudget = Math.max(
+    softTokenBudget,
+    positiveInt(
+      envNumber('POLICY_HARD_TOKEN_BUDGET') ?? requestedPolicyThresholds.hardTokenBudget,
+      DEFAULT_POLICY_THRESHOLDS.hardTokenBudget,
+    ),
+  );
+  const softCostBudgetUsd = Number(
+    positiveNumber(
+      envNumber('POLICY_SOFT_COST_BUDGET_USD') ?? requestedPolicyThresholds.softCostBudgetUsd,
+      DEFAULT_POLICY_THRESHOLDS.softCostBudgetUsd,
+    ).toFixed(4),
+  );
+  const hardCostBudgetUsd = Number(
+    Math.max(
+      softCostBudgetUsd,
+      positiveNumber(
+        envNumber('POLICY_HARD_COST_BUDGET_USD') ?? requestedPolicyThresholds.hardCostBudgetUsd,
+        DEFAULT_POLICY_THRESHOLDS.hardCostBudgetUsd,
+      ),
+    ).toFixed(4),
+  );
+
+  const policyThresholds: PolicyThresholdConfig = {
+    softTokenBudget,
+    hardTokenBudget,
+    softCostBudgetUsd,
+    hardCostBudgetUsd,
+    sideEffectDenseTaskCount: positiveInt(
+      envNumber('POLICY_SIDE_EFFECT_DENSE_TASK_COUNT') ?? requestedPolicyThresholds.sideEffectDenseTaskCount,
+      DEFAULT_POLICY_THRESHOLDS.sideEffectDenseTaskCount,
+    ),
+    parallelSideEffectsViolationThreshold: nonNegativeInt(
+      envNumber('POLICY_PARALLEL_SIDE_EFFECTS_VIOLATION_THRESHOLD')
+      ?? requestedPolicyThresholds.parallelSideEffectsViolationThreshold,
+      DEFAULT_POLICY_THRESHOLDS.parallelSideEffectsViolationThreshold,
+    ),
+    sideEffectParallelismCap: positiveInt(
+      envNumber('POLICY_SIDE_EFFECT_PARALLELISM_CAP') ?? requestedPolicyThresholds.sideEffectParallelismCap,
+      DEFAULT_POLICY_THRESHOLDS.sideEffectParallelismCap,
+    ),
+    directiveBudgetHeadroomMultiplier: positiveNumber(
+      envNumber('POLICY_DIRECTIVE_BUDGET_HEADROOM_MULTIPLIER')
+      ?? requestedPolicyThresholds.directiveBudgetHeadroomMultiplier,
+      DEFAULT_POLICY_THRESHOLDS.directiveBudgetHeadroomMultiplier,
+    ),
+  };
+
+  const modeFromEnv = process.env.POLICY_MODE?.toLowerCase();
+  const policyMode: PolicyMode = modeFromEnv === 'strict' || modeFromEnv === 'lenient'
+    ? modeFromEnv
+    : validated.policyMode;
+  const policyRulePackId = process.env.POLICY_RULE_PACK_ID?.trim() || validated.policyRulePackId;
+  const policyRulePackVersion = process.env.POLICY_RULE_PACK_VERSION?.trim() || validated.policyRulePackVersion;
+
   return Object.freeze({
     databasePath,
     isMemoryDb,
@@ -230,6 +367,10 @@ export function resolveConfig(validated: z.infer<typeof DesiAgentConfigSchema>):
     staleExecutionMinutes: parseInt(process.env.STALE_EXECUTION_MINUTES || '5', 10),
     autoStartScheduler: validated.autoStartScheduler,
     policyEnforcement: validated.policyEnforcement,
+    policyMode,
+    policyRulePackId,
+    policyRulePackVersion,
+    policyThresholds: Object.freeze(policyThresholds),
     enableToolValidation: validated.enableToolValidation,
     skipGenerationStats: validated.skipGenerationStats,
     statsReconcileIntervalMs: Number.isFinite(statsReconcileIntervalMs) && statsReconcileIntervalMs > 0

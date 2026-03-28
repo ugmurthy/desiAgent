@@ -12,6 +12,8 @@
 import { setupDesiAgent } from '../src/index.js';
 
 const isRaw = process.argv.includes('--raw');
+const searchIdx = process.argv.indexOf('--search');
+const searchQuery = searchIdx !== -1 ? process.argv[searchIdx + 1] : undefined;
 
 async function main() {
   const client = await setupDesiAgent({
@@ -24,8 +26,8 @@ async function main() {
 
  
   try {
-    // List all DAGs
-    const allDags = await client.dags.list( );
+    // List all DAGs (optionally filtered by search query)
+    const allDags = await client.dags.list(searchQuery ? { search: searchQuery } : undefined);
 
     if (isRaw) {
       //console.log(JSON.stringify(allDags,null,2));
@@ -33,7 +35,7 @@ async function main() {
       return;
     }
 
-    console.log('Listing all DAGs...\n');
+    console.log(searchQuery ? `Searching DAGs for "${searchQuery}"...\n` : 'Listing all DAGs...\n');
 
     if (allDags.length === 0) {
       console.log('No DAGs found.');

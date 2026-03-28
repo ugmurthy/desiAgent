@@ -35,6 +35,46 @@ function hasColumn(sqlite: any, tableName: string, columnName: string): boolean 
   return rows.some((row) => row.name === columnName);
 }
 
+function tableExists(sqlite: any, tableName: string): boolean {
+  const rows = sqlite
+    .query(`SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}';`)
+    .all() as Array<{ name?: string }>;
+
+  return rows.some((row) => row.name === tableName);
+}
+
+/**
+ * One-time compatibility preflight for legacy databases.
+ *
+ * This runs before schema/index synchronization so new indexes that reference
+ * recently-added columns do not fail on existing tenant DBs.
+ */
+function runSchemaCompatibilityPreflight(sqlite: any, logger: any): void {
+  const appliedMigrations: string[] = [];
+
+  if (tableExists(sqlite, 'sub_steps') && !hasColumn(sqlite, 'sub_steps', 'generation_id')) {
+    sqlite.exec('ALTER TABLE sub_steps ADD COLUMN generation_id TEXT;');
+    appliedMigrations.push('sub_steps.generation_id');
+  }
+
+  if (tableExists(sqlite, 'policy_artifacts') && !hasColumn(sqlite, 'policy_artifacts', 'rule_pack_id')) {
+    sqlite.exec("ALTER TABLE policy_artifacts ADD COLUMN rule_pack_id TEXT NOT NULL DEFAULT 'core';");
+    appliedMigrations.push('policy_artifacts.rule_pack_id');
+  }
+
+  if (tableExists(sqlite, 'policy_artifacts') && !hasColumn(sqlite, 'policy_artifacts', 'rule_pack_version')) {
+    sqlite.exec("ALTER TABLE policy_artifacts ADD COLUMN rule_pack_version TEXT NOT NULL DEFAULT '2026.03';");
+    appliedMigrations.push('policy_artifacts.rule_pack_version');
+  }
+
+  if (appliedMigrations.length > 0) {
+    logger.info(
+      { migrations: appliedMigrations },
+      'Applied one-time database compatibility migration(s) for legacy schema',
+    );
+  }
+}
+
 function backfillPlanningAttemptGenerationIds(sqlite: any, logger: any): void {
   const rows = sqlite
     .query("SELECT id, planning_attempts AS planningAttempts FROM dags WHERE planning_attempts IS NOT NULL;")
@@ -103,6 +143,20 @@ function runRuntimeMigrations(sqlite: any, logger: any): void {
     "UPDATE sub_steps SET generation_id = json_extract(generation_stats, '$.id') WHERE generation_id IS NULL AND generation_stats IS NOT NULL AND json_extract(generation_stats, '$.id') IS NOT NULL;"
   );
 
+  if (!hasColumn(sqlite, 'policy_artifacts', 'rule_pack_id')) {
+    sqlite.exec("ALTER TABLE policy_artifacts ADD COLUMN rule_pack_id TEXT NOT NULL DEFAULT 'core';");
+    logger.info('Applied migration: added policy_artifacts.rule_pack_id');
+  }
+
+  if (!hasColumn(sqlite, 'policy_artifacts', 'rule_pack_version')) {
+    sqlite.exec("ALTER TABLE policy_artifacts ADD COLUMN rule_pack_version TEXT NOT NULL DEFAULT '2026.03';");
+    logger.info('Applied migration: added policy_artifacts.rule_pack_version');
+  }
+
+  sqlite.exec(
+    'CREATE INDEX IF NOT EXISTS idx_policy_artifacts_rule_pack ON policy_artifacts(rule_pack_id, rule_pack_version);'
+  );
+
   backfillPlanningAttemptGenerationIds(sqlite, logger);
 }
 
@@ -129,7 +183,11 @@ function createDatabase(dbPath: string, isMemoryDb: boolean): DrizzleDB {
     if (!isMemoryDb) {
       sqlite.exec('PRAGMA journal_mode = WAL;');
     }
+    sqlite.exec('PRAGMA busy_timeout = 5000;');
     sqlite.exec('PRAGMA foreign_keys = ON;');
+
+    // Run one-time legacy schema compatibility fixes before schema/index sync.
+    runSchemaCompatibilityPreflight(sqlite, logger);
 
     // Always initialize tables
     initializeTables(sqlite, logger);

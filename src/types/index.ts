@@ -6,7 +6,23 @@
 
 // Configuration types
 export type { DesiAgentConfig, ProcessedDesiAgentConfig } from './config.js';
-export { DesiAgentConfigSchema, type LLMProvider, type LogLevel, type PolicyEnforcement } from './config.js';
+export {
+  DesiAgentConfigSchema,
+  type LLMProvider,
+  type LogLevel,
+  type PolicyEnforcement,
+  type PolicyMode,
+  type PolicyThresholdConfig,
+} from './config.js';
+export type {
+  PolicyOutcome,
+  PolicyViolation,
+  PolicyThresholds,
+  PolicyDecision,
+  PolicyEvaluationContext,
+  PolicyRulePack,
+} from '../core/policy/types.js';
+export type { PolicyArtifactFilter, PolicyAuditSummary } from '../core/policy/policyRepository.js';
 
 // Execution types
 export {

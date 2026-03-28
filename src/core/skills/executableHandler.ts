@@ -8,7 +8,6 @@ const EXECUTABLE_HANDLER_CANDIDATES = [
   'handler.js',
   'handler.mjs',
   'handler.cjs',
-  'handler.ts',
   'handler.mts',
   'handler.cts',
 ] as const;

@@ -239,6 +239,9 @@ bun run examples/init_6_memory_db.ts
 # List all agents
 bun run examples/list-agents.ts
 
+# Activate, deactivate, or inspect a scheduled DAG
+bun run examples/toggle-dag-schedule.ts dag_abc123 status
+
 # List all tools
 bun run examples/list-tools.ts --names
 ```
@@ -376,10 +379,28 @@ interface DesiAgentConfig {
 
   // Feature flags
   autoStartScheduler?: boolean;  // default: true
+  policyEnforcement?: 'soft' | 'hard'; // default: hard
+  policyMode?: 'lenient' | 'strict';   // default: lenient
+  policyRulePackId?: string;           // default: core
+  policyRulePackVersion?: string;      // default: 2026.03
+  policyThresholds?: {
+    softTokenBudget?: number;
+    hardTokenBudget?: number;
+    softCostBudgetUsd?: number;
+    hardCostBudgetUsd?: number;
+    sideEffectDenseTaskCount?: number;
+    parallelSideEffectsViolationThreshold?: number;
+    sideEffectParallelismCap?: number;
+    directiveBudgetHeadroomMultiplier?: number;
+  };
   enableToolValidation?: boolean; // default: true
   skipGenerationStats?: boolean; // default: false
 }
 ```
+
+## Policy Layer Guide
+
+For a complete setup and operations walkthrough, see [docs/POLICY-LAYER-GUIDE.md](./docs/POLICY-LAYER-GUIDE.md).
 
 ## Contributing
 

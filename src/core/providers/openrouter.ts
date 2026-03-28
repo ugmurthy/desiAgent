@@ -12,6 +12,7 @@ import type {
   LLMCallParams,
   LLMResponse,
   UsageInfo,
+  FinishReason,
 } from './types.js';
 import { getLogger } from '../../util/logger.js';
 import { LLMProviderError } from '../../errors/index.js';
@@ -84,18 +85,8 @@ async function handleApiError(res: Response): Promise<never> {
 }
 
 function mapFinishReason(reason?: string | null): LLMResponse['finishReason'] {
-  switch (reason) {
-    case 'stop':
-      return 'stop';
-    case 'tool_calls':
-      return 'tool_calls';
-    case 'length':
-      return 'length';
-    case 'content_filter':
-      return 'content_filter';
-    default:
-      return 'stop';
-  }
+  const valid = ['stop', 'tool_calls', 'length', 'content_filter', 'error'] as const;
+  return valid.includes(reason as any) ? (reason as FinishReason) : 'error';
 }
 
 function jsonParseSafe(s: string): any {

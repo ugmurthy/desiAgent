@@ -253,6 +253,7 @@ describe('DAGsService Integration', () => {
   let db: any;
   let agentsService: { resolve: (name: string) => Promise<any> };
   let scheduler: { registerDAGSchedule: ReturnType<typeof vi.fn>; updateDAGSchedule: ReturnType<typeof vi.fn>; unregisterDAGSchedule: ReturnType<typeof vi.fn> };
+  let llmProvider: any;
   let service: DAGsService;
 
   beforeEach(async () => {
@@ -289,58 +290,60 @@ describe('DAGsService Integration', () => {
       unregisterDAGSchedule: vi.fn(),
     };
 
-    service = new DAGsService({
-      db,
-      llmProvider: {
-        name: 'default-mock-provider',
-        validateToolCallSupport: async () => ({ supported: true }),
-        chat: async (params: Record<string, any>) => {
-          const userContent = params.messages?.[1]?.content;
-          const userText = typeof userContent === 'string' ? userContent : JSON.stringify(userContent ?? '');
+    llmProvider = {
+      name: 'default-mock-provider',
+      validateToolCallSupport: async () => ({ supported: true }),
+      chat: async (params: Record<string, any>) => {
+        const userContent = params.messages?.[1]?.content;
+        const userText = typeof userContent === 'string' ? userContent : JSON.stringify(userContent ?? '');
 
-          if (userText.includes('NEEDS_CLARIFICATION') && !userText.includes('User clarification:')) {
-            const payload = {
-              original_request: userText,
-              intent: { primary: 'clarify', sub_intents: [] },
-              entities: [],
-              sub_tasks: [],
-              synthesis_plan: 'await clarification',
-              validation: { coverage: 'medium', gaps: [], iteration_triggers: [] },
-              clarification_needed: true,
-              clarification_query: 'Please clarify what output format you need.',
-            };
-            return {
-              content: `\`\`\`json\n${JSON.stringify(payload)}\n\`\`\``,
-            };
-          }
-
+        if (userText.includes('NEEDS_CLARIFICATION') && !userText.includes('User clarification:')) {
           const payload = {
             original_request: userText,
-            intent: { primary: 'integration-test', sub_intents: [] },
+            intent: { primary: 'clarify', sub_intents: [] },
             entities: [],
-            sub_tasks: [
-              {
-                id: '1',
-                description: 'Perform deterministic inference step',
-                thought: 'Test planning path',
-                action_type: 'inference',
-                tool_or_prompt: { name: 'inference', params: { prompt: 'Return deterministic output' } },
-                expected_output: 'deterministic output',
-                dependencies: [],
-              },
-            ],
-            synthesis_plan: 'Summarize deterministic output',
-            validation: { coverage: 'high', gaps: [], iteration_triggers: [] },
-            clarification_needed: false,
-            clarification_query: '',
+            sub_tasks: [],
+            synthesis_plan: 'await clarification',
+            validation: { coverage: 'medium', gaps: [], iteration_triggers: [] },
+            clarification_needed: true,
+            clarification_query: 'Please clarify what output format you need.',
           };
-
           return {
             content: `\`\`\`json\n${JSON.stringify(payload)}\n\`\`\``,
           };
-        },
-        callWithTools: async () => ({ thought: 'mock', finishReason: 'stop' as const }),
+        }
+
+        const payload = {
+          original_request: userText,
+          intent: { primary: 'integration-test', sub_intents: [] },
+          entities: [],
+          sub_tasks: [
+            {
+              id: '1',
+              description: 'Perform deterministic inference step',
+              thought: 'Test planning path',
+              action_type: 'inference',
+              tool_or_prompt: { name: 'inference', params: { prompt: 'Return deterministic output' } },
+              expected_output: 'deterministic output',
+              dependencies: [],
+            },
+          ],
+          synthesis_plan: 'Summarize deterministic output',
+          validation: { coverage: 'high', gaps: [], iteration_triggers: [] },
+          clarification_needed: false,
+          clarification_query: '',
+        };
+
+        return {
+          content: `\`\`\`json\n${JSON.stringify(payload)}\n\`\`\``,
+        };
       },
+      callWithTools: async () => ({ thought: 'mock', finishReason: 'stop' as const }),
+    };
+
+    service = new DAGsService({
+      db,
+      llmProvider,
       toolRegistry: new ToolRegistry(),
       agentsService,
       scheduler,
@@ -376,7 +379,7 @@ describe('DAGsService Integration', () => {
     const scheduled = await service.listScheduled();
     expect(scheduled.some((item) => item.id === created.dagId)).toBe(true);
 
-    const execution = await service.execute(created.dagId);
+    const execution = await service.execute(created.dagId, { policyEnforcement: 'soft' });
     expect(execution.id).toMatch(/^exec_/);
     expect(execution.status).toBe('pending');
     expect(dagExecutorExecuteMock).toHaveBeenCalledWith(
@@ -394,7 +397,7 @@ describe('DAGsService Integration', () => {
     expect(db.__state.policy_artifacts[0]).toEqual(expect.objectContaining({
       dagId: created.dagId,
       executionId: execution.id,
-      outcome: 'allow',
+      outcome: 'deny',
       mode: 'lenient',
     }));
 
@@ -402,6 +405,91 @@ describe('DAGsService Integration', () => {
     expect(subSteps.length).toBe(1);
     expect(subSteps[0].taskId).toBe('001');
     expect(subSteps[0].toolOrPromptName).toBe('inference');
+
+    const policyArtifacts = await service.listPolicyArtifacts({ executionId: execution.id });
+    expect(policyArtifacts).toHaveLength(1);
+    expect(policyArtifacts[0].rulePackId).toBe('core');
+    expect(policyArtifacts[0].rulePackVersion).toBe('2026.03');
+
+    const summary = await service.summarizePolicyArtifacts({ executionId: execution.id });
+    expect(summary.total).toBe(1);
+    expect(summary.byOutcome.deny).toBe(1);
+
+    const persisted = await service.getPolicyArtifact(policyArtifacts[0].id);
+    expect(persisted?.id).toBe(policyArtifacts[0].id);
+  });
+
+  it('enforces strict side-effect approval and supports explicit approval override', async () => {
+    const strictService = new DAGsService({
+      db,
+      llmProvider,
+      toolRegistry: new ToolRegistry(),
+      agentsService,
+      scheduler,
+      artifactsDir: '/tmp',
+      staleExecutionMinutes: 0,
+      apiKey: 'fake-key',
+      skipGenerationStats: true,
+      policyMode: 'strict',
+    });
+
+    const dagId = 'dag_policy_strict_side_effect';
+    db.__state.dags.push({
+      id: dagId,
+      status: 'success',
+      result: {
+        original_request: 'write a file',
+        intent: { primary: 'policy-strict', sub_intents: [] },
+        entities: [],
+        sub_tasks: [
+          {
+            id: '001',
+            description: 'write file',
+            thought: 'side effect for strict test',
+            action_type: 'tool',
+            tool_or_prompt: {
+              name: 'writeFile',
+              params: { path: 'strict.txt', content: 'strict mode' },
+            },
+            expected_output: 'written',
+            dependencies: ['none'],
+          },
+        ],
+        synthesis_plan: 'n/a',
+        validation: { coverage: 'high', gaps: [], iteration_triggers: [] },
+        clarification_needed: false,
+        clarification_query: '',
+      },
+      usage: null,
+      generationStats: null,
+      attempts: 1,
+      params: { goalText: 'strict side effect path' },
+      agentName: 'inference',
+      dagTitle: 'Policy strict side effect',
+      cronSchedule: null,
+      scheduleActive: false,
+      timezone: 'UTC',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      planningTotalUsage: null,
+      planningTotalCostUsd: null,
+      planningAttempts: null,
+    });
+
+    await expect(strictService.execute(dagId)).rejects.toThrow('Execution requires policy clarification');
+
+    const blockedArtifacts = await strictService.listPolicyArtifacts({ dagId });
+    expect(blockedArtifacts).toHaveLength(1);
+    expect(blockedArtifacts[0]).toEqual(expect.objectContaining({
+      outcome: 'needs_clarification',
+      mode: 'strict',
+    }));
+
+    await strictService.execute(dagId, { sideEffectApproval: true });
+
+    const approvedArtifacts = await strictService.listPolicyArtifacts({ dagId });
+    expect(approvedArtifacts).toHaveLength(2);
+    expect(approvedArtifacts.some((artifact: any) => artifact.outcome === 'allow')).toBe(true);
   });
 
   it('handles clarification and resumes into the original DAG record', async () => {
@@ -445,10 +533,14 @@ describe('DAGsService Integration', () => {
     expect((scheduled.metadata as any).cronSchedule).toBe('0 * * * *');
     expect(scheduler.updateDAGSchedule).toHaveBeenCalledWith(planned.dagId, '0 * * * *', true, 'UTC');
 
-    await service.update(planned.dagId, { scheduleActive: false });
+    await service.deactivateSchedule(planned.dagId);
     expect(scheduler.unregisterDAGSchedule).toHaveBeenCalledWith(planned.dagId);
 
-    const execution = await service.execute(planned.dagId);
+    const reactivated = await service.activateSchedule(planned.dagId);
+    expect((reactivated.metadata as any).scheduleActive).toBe(true);
+    expect(scheduler.updateDAGSchedule).toHaveBeenCalledWith(planned.dagId, '0 * * * *', true, 'UTC');
+
+    const execution = await service.execute(planned.dagId, { policyEnforcement: 'soft' });
     await expect(service.safeDelete(planned.dagId)).rejects.toThrow('Cannot delete DAG');
 
     await db.delete(dagSubSteps).where(eq(dagSubSteps.executionId, execution.id));
@@ -465,10 +557,10 @@ describe('DAGsService Integration', () => {
     expect(planned.status).toBe('success');
     if (planned.status !== 'success') return;
 
-    const execution = await service.execute(planned.dagId);
+    const execution = await service.execute(planned.dagId, { policyEnforcement: 'soft' });
 
     await db.update(dagExecutions).set({ status: 'failed', updatedAt: new Date() }).where(eq(dagExecutions.id, execution.id));
-    const resumed = await service.resume(execution.id);
+    const resumed = await service.resume(execution.id, { policyEnforcement: 'soft' });
     expect(resumed.status).toBe('running');
     expect(resumed.retryCount).toBe(1);
     expect(dagExecutorExecuteMock).toHaveBeenNthCalledWith(
@@ -485,6 +577,7 @@ describe('DAGsService Integration', () => {
     );
     expect(db.__state.policy_artifacts).toHaveLength(2);
     expect(db.__state.policy_artifacts.every((artifact: any) => artifact.executionId === execution.id)).toBe(true);
+    expect(db.__state.policy_artifacts.every((artifact: any) => artifact.outcome === 'deny')).toBe(true);
 
     const [subStep] = await service.getSubSteps(execution.id);
     await db

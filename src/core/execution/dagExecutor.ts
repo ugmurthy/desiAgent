@@ -280,6 +280,11 @@ export class DAGExecutor {
       // When a sendEmail param references a dependency whose result is a JSON string
       // containing email fields (to, subject, body, etc.), extract the specific field.
       resolvedParams[key] = this.resolveSendEmailField(key, value, matches, task, taskResults, resolvedParams);
+    } else if (tool==='e2b-execute' && key==='code') {
+        // strip backtick if present
+
+        resolvedParams[key] = this.resolveCode(task, taskResults);
+        this.logger.info(`  ╰─resolvedParams[key]:${resolvedParams[key]}`);
     }
     
     else {
@@ -287,6 +292,24 @@ export class DAGExecutor {
     }
   }
 
+  private resolveCode(task: Record<string, any>,
+    taskResults: Map<string, any>):string {
+    let code = ''; 
+  
+    for (const deps of task.dependencies) {
+      this.logger.info(`╰─resolveCode for task ${task.id} dependent on task:${deps} `);
+      code = taskResults.get(deps);
+      this.logger.info(`  ╰─type of depResult - ${typeof code}`);
+
+      if (code.startsWith('```')) {
+       // return 2nd to 2nd last line 
+       return code.split('\n').slice(1, -1).join('\n');
+      } 
+      
+    }
+      return code;
+  } 
+  
   private resolveEmailContent(
     task: Record<string, any>,
     taskResults: Map<string, any>
@@ -990,9 +1013,12 @@ export class DAGExecutor {
           }
           
           if (skillMeta.type === 'executable') {
+            const {resolvedParams} = this.resolveDependencies(task,taskResults);
             const { handler, handlerPath } = await loadExecutableSkillHandler(skillName, skillMeta.filePath);
             this.logger.info(`Executing skill ${skillName}/${skillMeta.type} with handler at ${handlerPath}`);
-            const handlerResult = await handler(task.tool_or_prompt.params || {});
+            this.logger.info(` ╭─params : ${JSON.stringify(resolvedParams,null,2)} `)
+            const handlerResult = await handler(resolvedParams || {});
+            this.logger.info(` ╰─results : ${JSON.stringify(handlerResult,null,2)} `)
             return { content: handlerResult };
           }
 

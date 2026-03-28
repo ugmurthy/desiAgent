@@ -5,7 +5,7 @@
  * DAGs represent decomposed workflows for complex objectives.
  */
 
-import { eq, desc, isNotNull, sql, gte, lte, and } from 'drizzle-orm';
+import { eq, desc, isNotNull, sql, gte, lte, and, like } from 'drizzle-orm';
 import { nanoid } from 'nanoid';
 import cronstrue from 'cronstrue';
 import type { DrizzleDB } from '../../db/client.js';
@@ -33,8 +33,13 @@ import { MinimalSkillDetector } from '../skills/detector.js';
 import type { StatsQueue } from '../workers/statsQueue.js';
 import { buildGlobalContext as buildGlobalContextShared, buildInferencePrompt as buildInferencePromptShared } from './contextBuilder.js';
 import { deriveExecutionStatus as deriveExecutionStatusShared, aggregateUsage as aggregateUsageShared, aggregateCost as aggregateCostShared } from './executionAggregates.js';
-import { LenientPolicyEngine } from '../policy/engine.js';
-import type { PolicyDecision, PolicyEngine, PolicyEnforcement } from '../policy/types.js';
+import { DefaultPolicyEngine } from '../policy/engine.js';
+import {
+  PolicyRepository,
+  type PolicyArtifactFilter,
+  type PolicyAuditSummary,
+} from '../policy/policyRepository.js';
+import type { PolicyDecision, PolicyEngine, PolicyEnforcement, PolicyMode, PolicyThresholds } from '../policy/types.js';
 
 export function generateDAGId(): string {
   return `dag_${nanoid(21)}`;
@@ -76,6 +81,11 @@ export interface DAGsServiceDeps {
   statsQueue?: StatsQueue;
   policyEngine?: PolicyEngine;
   policyEnforcement?: PolicyEnforcement;
+  policyMode?: PolicyMode;
+  policyRulePackId?: string;
+  policyRulePackVersion?: string;
+  policyThresholds?: Partial<PolicyThresholds>;
+  policyRepository?: PolicyRepository;
 }
 
 export interface CreateDAGFromGoalOptions {
@@ -138,6 +148,7 @@ export interface ExecuteOptions {
   provider?: 'openai' | 'openrouter' | 'ollama';
   model?: string;
   policyEnforcement?: PolicyEnforcement;
+  sideEffectApproval?: boolean;
   /**
    * Execution configuration for performance tuning
    */
@@ -147,6 +158,7 @@ export interface ExecuteOptions {
 export interface ResumeOptions {
   executionConfig?: ExecutionConfig;
   policyEnforcement?: PolicyEnforcement;
+  sideEffectApproval?: boolean;
 }
 
 export interface RedoInferenceParams {
@@ -187,6 +199,7 @@ export class DAGsService {
   private skillRegistry?: SkillRegistry;
   private statsQueue?: StatsQueue;
   private policyEngine: PolicyEngine;
+  private policyRepository: PolicyRepository;
   private defaultPolicyEnforcement: PolicyEnforcement;
   private logger = getLogger();
 
@@ -205,7 +218,16 @@ export class DAGsService {
     this.skipGenerationStats = deps.skipGenerationStats;
     this.skillRegistry = deps.skillRegistry;
     this.statsQueue = deps.statsQueue;
-    this.policyEngine = deps.policyEngine ?? new LenientPolicyEngine(this.toolRegistry, 5);
+    this.policyEngine = deps.policyEngine ?? new DefaultPolicyEngine(this.toolRegistry, {
+      mode: deps.policyMode ?? 'lenient',
+      maxParallelismCap: 5,
+      rulePack: {
+        id: deps.policyRulePackId ?? 'core',
+        version: deps.policyRulePackVersion ?? '2026.03',
+      },
+      thresholds: deps.policyThresholds,
+    });
+    this.policyRepository = deps.policyRepository ?? new PolicyRepository(this.db);
     this.defaultPolicyEnforcement = deps.policyEnforcement ?? 'hard';
   }
 
@@ -220,8 +242,10 @@ export class DAGsService {
         dagId,
         executionId,
         outcome: decision.outcome,
-        mode: decision.mode,
+        mode: decision.mode ?? 'lenient',
         policyVersion: decision.policyVersion,
+        rulePackId: decision.rulePack?.id ?? 'core',
+        rulePackVersion: decision.rulePack?.version ?? 'legacy',
         directives: decision.directives,
         violations: decision.violations,
         rationale: decision.rationale,
@@ -247,11 +271,26 @@ export class DAGsService {
     }
 
     const candidate = options as ResumeOptions;
-    if (typeof candidate === 'object' && ('executionConfig' in candidate || 'policyEnforcement' in candidate)) {
+    if (
+      typeof candidate === 'object'
+      && ('executionConfig' in candidate || 'policyEnforcement' in candidate || 'sideEffectApproval' in candidate)
+    ) {
       return candidate;
     }
 
     return { executionConfig: options as ExecutionConfig };
+  }
+
+  async getPolicyArtifact(id: string) {
+    return this.policyRepository.get(id);
+  }
+
+  async listPolicyArtifacts(filter?: PolicyArtifactFilter) {
+    return this.policyRepository.list(filter);
+  }
+
+  async summarizePolicyArtifacts(filter?: Omit<PolicyArtifactFilter, 'limit' | 'offset'>): Promise<PolicyAuditSummary> {
+    return this.policyRepository.summarize(filter);
   }
 
   private buildExecutionConfigWithPolicy(
@@ -724,7 +763,7 @@ export class DAGsService {
         this.logger.info({ dagId, agentName, clarificationQuery: dag.clarification_query }, 'Clarification DAG saved to database');
 
         // Fire-and-forget: update title and generation stats in the background
-        const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
+        const titleMasterPromise = this.generateTitleAsync(goalText, options.abortSignal);
         this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
         return {
@@ -782,7 +821,7 @@ export class DAGsService {
         this.registerScheduleIfActive(dagId, cronSchedule, scheduleActive, timezone);
 
         // Fire-and-forget: update title and generation stats in the background
-        const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
+        const titleMasterPromise = this.generateTitleAsync(goalText, options.abortSignal);
         this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
         return { status: 'success', dagId };
@@ -844,7 +883,7 @@ export class DAGsService {
       this.registerScheduleIfActive(dagId, cronSchedule, scheduleActive, timezone);
 
       // Fire-and-forget: update title and generation stats in the background
-      const titleMasterPromise = this.generateTitleAsync(activeLLMProvider, goalText, options.abortSignal);
+      const titleMasterPromise = this.generateTitleAsync(goalText, options.abortSignal);
       this.backgroundUpdateDag(dagId, attemptGenStatsPromise, titleMasterPromise, [...planningAttempts], { ...planningUsageTotal }, planningCostTotal, attempt);
 
       return { status: 'success', dagId };
@@ -987,6 +1026,7 @@ export class DAGsService {
       requestedMaxParallelism: _options?.executionConfig?.maxParallelism,
       requestedMaxExecutionCostUsd: _options?.executionConfig?.maxExecutionCostUsd,
       requestedMaxExecutionTokens: _options?.executionConfig?.maxExecutionTokens,
+      sideEffectApproval: _options?.sideEffectApproval,
     });
     const policyEnforcement = this.resolvePolicyEnforcement(_options?.policyEnforcement);
 
@@ -1121,6 +1161,7 @@ export class DAGsService {
       requestedMaxParallelism: resumeOptions.executionConfig?.maxParallelism,
       requestedMaxExecutionCostUsd: resumeOptions.executionConfig?.maxExecutionCostUsd,
       requestedMaxExecutionTokens: resumeOptions.executionConfig?.maxExecutionTokens,
+      sideEffectApproval: resumeOptions.sideEffectApproval,
     });
     const policyEnforcement = this.resolvePolicyEnforcement(resumeOptions.policyEnforcement);
 
@@ -1407,6 +1448,9 @@ export class DAGsService {
     if (filter?.status) {
       conditions.push(eq(dags.status, filter.status as any));
     }
+    if (filter?.search) {
+      conditions.push(like(dags.dagTitle, `%${filter.search}%`));
+    }
     if (filter?.createdAfter) {
       conditions.push(gte(dags.createdAt, filter.createdAfter));
     }
@@ -1452,6 +1496,42 @@ export class DAGsService {
     });
   }
 
+  async activateSchedule(id: string): Promise<DAG> {
+    const [existing] = await this.db.select().from(dags).where(eq(dags.id, id)).limit(1);
+
+    if (!existing) {
+      throw new NotFoundError('DAG', id);
+    }
+
+    if (!existing.cronSchedule) {
+      throw new ValidationError('Cannot activate schedule for DAG without a cron schedule', 'cronSchedule', existing.cronSchedule);
+    }
+
+    if (existing.scheduleActive) {
+      return this.mapDAG(existing);
+    }
+
+    return this.update(id, { scheduleActive: true });
+  }
+
+  async deactivateSchedule(id: string): Promise<DAG> {
+    const [existing] = await this.db.select().from(dags).where(eq(dags.id, id)).limit(1);
+
+    if (!existing) {
+      throw new NotFoundError('DAG', id);
+    }
+
+    if (!existing.cronSchedule) {
+      throw new ValidationError('Cannot deactivate schedule for DAG without a cron schedule', 'cronSchedule', existing.cronSchedule);
+    }
+
+    if (!existing.scheduleActive) {
+      return this.mapDAG(existing);
+    }
+
+    return this.update(id, { scheduleActive: false });
+  }
+
   async update(id: string, updates: Partial<{
     status: string;
     result: any;
@@ -1472,6 +1552,13 @@ export class DAGsService {
       if (!validation.valid) {
         throw new ValidationError(`Invalid cron expression: ${validation.error}`, 'cronSchedule', updates.cronSchedule);
       }
+    }
+
+    const effectiveCronSchedule = updates.cronSchedule !== undefined ? updates.cronSchedule : existing.cronSchedule;
+    const effectiveScheduleActive = updates.scheduleActive !== undefined ? updates.scheduleActive : existing.scheduleActive;
+
+    if (effectiveScheduleActive && !effectiveCronSchedule) {
+      throw new ValidationError('Cannot activate schedule for DAG without a cron schedule', 'cronSchedule', effectiveCronSchedule);
     }
 
     const updateData: Record<string, any> = {
@@ -1495,13 +1582,9 @@ export class DAGsService {
     }
 
     if (this.scheduler && (updates.cronSchedule !== undefined || updates.scheduleActive !== undefined || updates.timezone !== undefined)) {
-      const finalSchedule = updates.cronSchedule ?? updated.cronSchedule;
-      const finalActive = updates.scheduleActive ?? updated.scheduleActive;
-      const finalTimezone = updates.timezone ?? updated.timezone;
-
-      if (finalSchedule && finalActive) {
-        this.scheduler.updateDAGSchedule(id, finalSchedule, finalActive, finalTimezone || 'UTC');
-        this.logger.info({ dagId: id, cronSchedule: finalSchedule, scheduleActive: finalActive, timezone: finalTimezone }, 'DAG schedule updated');
+      if (updated.cronSchedule && updated.scheduleActive) {
+        this.scheduler.updateDAGSchedule(id, updated.cronSchedule, updated.scheduleActive, updated.timezone || 'UTC');
+        this.logger.info({ dagId: id, cronSchedule: updated.cronSchedule, scheduleActive: updated.scheduleActive, timezone: updated.timezone }, 'DAG schedule updated');
       } else {
         this.scheduler.unregisterDAGSchedule(id);
         this.logger.info({ dagId: id }, 'DAG schedule unregistered');
@@ -1643,7 +1726,6 @@ export class DAGsService {
    * Returns null if TitleMaster is not available or fails
    */
   private async generateTitleAsync(
-    llmProvider: LLMProvider,
     goalText: string,
     abortSignal?: AbortSignal
   ): Promise<{
@@ -1660,13 +1742,23 @@ export class DAGsService {
         return null;
       }
 
-      const titleResponse = await llmProvider.chat({
+      this.logger.info({ agentName: titleMasterAgent.name, model: titleMasterAgent.model, provider: titleMasterAgent.provider }, 'Using TitleMaster agent config for title generation');
+
+      const titleProvider = createLLMProvider({
+        provider: titleMasterAgent.provider,
+        model: titleMasterAgent.model,
+        apiKey: this.apiKey,
+        baseUrl: titleMasterAgent.provider === 'ollama' ? this.ollamaBaseUrl : undefined,
+        skipGenerationStats: this.skipGenerationStats,
+      });
+
+      const titleResponse = await titleProvider.chat({
         messages: [
           { role: 'system', content: titleMasterAgent.systemPrompt },
           { role: 'user', content: truncate(goalText) },
         ],
-        temperature: 0.7,
-        maxTokens: 100,
+        temperature: titleMasterAgent.constraints?.temperature ?? 0.7,
+        maxTokens: titleMasterAgent.constraints?.maxTokens ?? 100,
         abortSignal,
         deferGenerationStats: true,
       });

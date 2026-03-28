@@ -202,8 +202,10 @@ export const policyArtifacts = sqliteTable(
     outcome: text('outcome', {
       enum: ['allow', 'deny', 'needs_clarification', 'rewrite'],
     }).notNull(),
-    mode: text('mode', { enum: ['lenient'] }).notNull().default('lenient'),
+    mode: text('mode', { enum: ['lenient', 'strict'] }).notNull().default('lenient'),
     policyVersion: text('policy_version').notNull(),
+    rulePackId: text('rule_pack_id').notNull().default('core'),
+    rulePackVersion: text('rule_pack_version').notNull().default('2026.03'),
     directives: text('directives', { mode: 'json' }).$type<Record<string, any>>(),
     violations: text('violations', { mode: 'json' }).$type<Array<Record<string, any>>>(),
     rationale: text('rationale'),
@@ -217,6 +219,7 @@ export const policyArtifacts = sqliteTable(
   (table) => ({
     dagIdIdx: index('idx_policy_artifacts_dag_id').on(table.dagId),
     executionIdIdx: index('idx_policy_artifacts_execution_id').on(table.executionId),
+    rulePackIdx: index('idx_policy_artifacts_rule_pack').on(table.rulePackId, table.rulePackVersion),
     createdAtIdx: index('idx_policy_artifacts_created_at').on(table.createdAt),
   })
 );

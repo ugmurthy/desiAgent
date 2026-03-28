@@ -19,6 +19,7 @@ function createFileTransport(logDir: string, level: string) {
     options: {
       file: join(logDir, 'app'),
       frequency: 'daily',
+      dateFormat: 'yyyy-MM-dd', 
       mkdir: true,
       extension: '.log',
     },

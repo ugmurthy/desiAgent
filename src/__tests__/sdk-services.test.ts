@@ -132,6 +132,8 @@ describe('SDK Service Method Coverage (examples/list-sdk.ts)', () => {
         'get',
         'list',
         'listScheduled',
+        'activateSchedule',
+        'deactivateSchedule',
         'update',
         'safeDelete',
         'runExperiments',

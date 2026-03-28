@@ -418,6 +418,40 @@ describe('DAGsService', () => {
       expect((updated.metadata as any).cronSchedule).toBe('0 * * * *');
       expect((updated.metadata as any).scheduleActive).toBe(true);
     });
+
+    it('rejects activating a schedule when no cron schedule exists', async () => {
+      db.__state.dags.push(makeDagRow({ id: 'dag_no_schedule', cronSchedule: null, scheduleActive: false }));
+
+      await expect(
+        service.update('dag_no_schedule', { scheduleActive: true })
+      ).rejects.toThrow('Cannot activate schedule for DAG without a cron schedule');
+    });
+  });
+
+  describe('schedule activation helpers', () => {
+    it('activates an existing scheduled DAG', async () => {
+      db.__state.dags.push(makeDagRow({ id: 'dag_sched_on', cronSchedule: '0 * * * *', scheduleActive: false }));
+
+      const updated = await service.activateSchedule('dag_sched_on');
+
+      expect((updated.metadata as any).scheduleActive).toBe(true);
+    });
+
+    it('deactivates an existing scheduled DAG', async () => {
+      db.__state.dags.push(makeDagRow({ id: 'dag_sched_off', cronSchedule: '0 * * * *', scheduleActive: true }));
+
+      const updated = await service.deactivateSchedule('dag_sched_off');
+
+      expect((updated.metadata as any).scheduleActive).toBe(false);
+    });
+
+    it('rejects activating a DAG that is not scheduled', async () => {
+      db.__state.dags.push(makeDagRow({ id: 'dag_unscheduled', cronSchedule: null, scheduleActive: false }));
+
+      await expect(
+        service.activateSchedule('dag_unscheduled')
+      ).rejects.toThrow('Cannot activate schedule for DAG without a cron schedule');
+    });
   });
 
   describe('safeDelete', () => {

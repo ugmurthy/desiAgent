@@ -80,13 +80,16 @@ async function main() {
   const client = await setupDesiAgent({
     llmProvider: 'openrouter',
     openrouterApiKey: process.env.OPENROUTER_API_KEY,
-    modelName: process.env.LLM_MODEL,
-    logLevel: process.env.LOG_LEVEL,
-    databasePath: process.env.DATABASE_PATH
+    modelName: process.env.OPENROUTER_MODEL,
+    logLevel: 'silent',
+    databasePath: ':memory:'
   });
 
   try {
+    console.log('Resolving agent:', agentName);
     const agent = await client.agents.resolve(agentName);
+    console.log('Agent:', agent);
+
     const fileBuffers = files?.map(f => readFileSync(f));
     const result = await client.executeTask(agent, task, fileBuffers);
     console.log(JSON.stringify(result, null, 2));

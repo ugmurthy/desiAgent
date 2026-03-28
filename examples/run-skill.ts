@@ -8,7 +8,7 @@
  * Examples:
  *   bun examples/run-skill.ts git-expert '{"command":"status"}'
  *   bun examples/run-skill.ts git-expert '{"command":"log --oneline -5"}'
- *
+ *.  bun run examples/run-skill.ts e2b-execute '{"language":"python","code":"import numpy as np\nprint(np.random.rand(1000))"}'
  * Without params it lists all discovered skills.
  *   bun examples/run-skill.ts
  */
@@ -79,3 +79,4 @@ console.log(`Running skill "${skillName}" with params:`, params, '\n');
 
 const result = await handler(params);
 console.log(result);
+console.log(JSON.stringify(result,null,2))

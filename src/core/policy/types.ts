@@ -1,6 +1,6 @@
 import type { DecomposerJob } from '../../types/dag.js';
 
-export type PolicyMode = 'lenient';
+export type PolicyMode = 'lenient' | 'strict';
 
 export type PolicyEnforcement = 'soft' | 'hard';
 
@@ -12,6 +12,22 @@ export interface PolicyViolation {
   taskId?: string;
   message: string;
   recommendation?: string;
+}
+
+export interface PolicyThresholds {
+  softTokenBudget: number;
+  hardTokenBudget: number;
+  softCostBudgetUsd: number;
+  hardCostBudgetUsd: number;
+  sideEffectDenseTaskCount: number;
+  parallelSideEffectsViolationThreshold: number;
+  sideEffectParallelismCap: number;
+  directiveBudgetHeadroomMultiplier: number;
+}
+
+export interface PolicyRulePack {
+  id: string;
+  version: string;
 }
 
 export interface ExecutionDirectives {
@@ -31,6 +47,7 @@ export interface PolicyDecision {
   rationale: string;
   policyVersion: string;
   mode: PolicyMode;
+  rulePack: PolicyRulePack;
 }
 
 export interface PolicyEvaluationContext {
@@ -39,6 +56,7 @@ export interface PolicyEvaluationContext {
   requestedMaxParallelism?: number;
   requestedMaxExecutionCostUsd?: number;
   requestedMaxExecutionTokens?: number;
+  sideEffectApproval?: boolean;
 }
 
 export interface PolicyEngine {

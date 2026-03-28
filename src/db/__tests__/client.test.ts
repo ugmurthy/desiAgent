@@ -37,7 +37,8 @@ describe('client', () => {
   beforeEach(() => {
     closeDatabase();
     mockExec.mockClear();
-    mockQuery.mockClear();
+    mockQuery.mockReset();
+    mockQuery.mockImplementation(() => ({ all: () => [] }));
     mockPrepare.mockClear();
   });
 
@@ -58,6 +59,48 @@ describe('client', () => {
       closeDatabase();
       const db2 = getDatabase(':memory:', true);
       expect(db1).not.toBe(db2);
+    });
+
+    it('applies one-time compatibility preflight for legacy schemas before table sync', () => {
+      mockQuery.mockImplementation((sql: string) => {
+        if (sql.includes("sqlite_master") && sql.includes("name='sub_steps'")) {
+          return { all: () => [{ name: 'sub_steps' }] };
+        }
+
+        if (sql.includes("sqlite_master") && sql.includes("name='policy_artifacts'")) {
+          return { all: () => [{ name: 'policy_artifacts' }] };
+        }
+
+        if (sql.includes('PRAGMA table_info(sub_steps)')) {
+          return { all: () => [{ name: 'id' }] };
+        }
+
+        if (sql.includes('PRAGMA table_info(policy_artifacts)')) {
+          return { all: () => [{ name: 'id' }, { name: 'policy_version' }] };
+        }
+
+        return { all: () => [] };
+      });
+
+      getDatabase(':memory:', true);
+
+      expect(mockExec).toHaveBeenCalledWith('ALTER TABLE sub_steps ADD COLUMN generation_id TEXT;');
+      expect(mockExec).toHaveBeenCalledWith(
+        "ALTER TABLE policy_artifacts ADD COLUMN rule_pack_id TEXT NOT NULL DEFAULT 'core';",
+      );
+      expect(mockExec).toHaveBeenCalledWith(
+        "ALTER TABLE policy_artifacts ADD COLUMN rule_pack_version TEXT NOT NULL DEFAULT '2026.03';",
+      );
+
+      const executedSql = mockExec.mock.calls.map((call) => call[0]);
+      const firstAlterIndex = executedSql.findIndex((sql) =>
+        String(sql).includes('ALTER TABLE policy_artifacts ADD COLUMN rule_pack_id')
+      );
+      const initializeTablesIndex = executedSql.findIndex((sql) => sql === '');
+
+      expect(firstAlterIndex).toBeGreaterThanOrEqual(0);
+      expect(initializeTablesIndex).toBeGreaterThanOrEqual(0);
+      expect(firstAlterIndex).toBeLessThan(initializeTablesIndex);
     });
   });
 

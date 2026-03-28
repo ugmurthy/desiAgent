@@ -192,6 +192,7 @@ export interface ExecutionEvent {
  */
 export interface DAGFilter {
   status?: ExecutionStatus;
+  search?: string;
   createdAfter?: Date;
   createdBefore?: Date;
   limit?: number;
